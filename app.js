@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.3.1";
+const VERSION = "v0.4.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -76,8 +76,11 @@ const ACCENTS = [
   { id: "nuit", nom: "Bleu nuit" }, { id: "sapin", nom: "Sapin" }, { id: "bordeaux", nom: "Bordeaux" },
   { id: "petrole", nom: "Pétrole" }, { id: "indigo", nom: "Indigo" }
 ];
-const SUPPORTS_DEPART = ["Cinéma", "Netflix", "Canal+", "Prime Video", "Disney+", "Apple TV+", "HBO Max", "MUBI",
-  "Blu-ray", "PC", "Switch", "PS5", "Steam Deck", "Papier", "Kindle", "Bibliothèque"];
+// Supports (seulement pour les jeux) : liste de départ, modifiable dans Réglages › Supports
+const SUPPORTS_DEPART = ["PC", "Téléphone", "Switch", "Switch 2", "Wii", "NDS", "Game Boy", "PS1", "PS2", "PS3", "PS4", "PS5", "Autres"];
+// Ancienne liste (v0.1 à v0.3, pour tous les types) : remplacée une fois par la nouvelle
+const ANCIENS_SUPPORTS = ["Cinéma", "Netflix", "Canal+", "Prime Video", "Disney+", "Apple TV+", "HBO Max", "MUBI",
+  "Blu-ray", "PC", "Switch", "PS5", "Steam Deck", "Papier", "Kindle", "Bibliothèque", "Bibliothèque"];
 
 // Réglages de ressenti, gardés sur CET appareil seulement (pas synchronisés)
 const CLE_REGLAGES = "mediatheque-reglages";
@@ -197,8 +200,13 @@ function normaliser(id, d) {
   };
 }
 function normaliserDonnees(d) {
+  let supports = Array.isArray(d.supports) ? d.supports.map(String).filter(Boolean) : [...SUPPORTS_DEPART];
+  // v0.4 : les supports ne servent plus qu'aux jeux. On remplace l'ancienne liste par la nouvelle,
+  // en gardant ceux que j'avais ajoutés moi-même (sauf films / séries / livres de la liste de départ).
+  if (!d.supportsJeux) supports = [...new Set([...SUPPORTS_DEPART, ...supports.filter(s => !ANCIENS_SUPPORTS.includes(s))])];
   return {
-    supports: Array.isArray(d.supports) ? d.supports.map(String).filter(Boolean) : [...SUPPORTS_DEPART],
+    supports,
+    supportsJeux: true,
     idees: typeof d.idees === "string" ? d.idees : ""   // Réglages › Notes
   };
 }
@@ -301,6 +309,7 @@ function demarrerFirebase() {
       } else {
         donnees = normaliserDonnees(snap.data());
         NotesIdees.maj(donnees.idees);
+        if (!snap.data().supportsJeux && !snap.metadata.fromCache) sauverDonnees();   // nouvelle liste de supports enregistrée une fois
       }
       chargeDonnees = true;
       rafraichir();
@@ -390,7 +399,7 @@ function router() {
   if (!pret()) return;
   const avant = adresse;
   adresse = lireAdresse();
-  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.vaOnglet = "proches"; }
+  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
   // Fenêtre « Choisir l'affiche » (2e couche, au-dessus de la fiche)
   const m = adresse.fiche && medias.get(adresse.fiche);
   if (adresse.affiche && m && affChoix?.id !== m.id) ouvrirAffiche(m);
@@ -694,26 +703,31 @@ function ficheHTML(m) {
       <div class="fi-btns"><button class="btn-icone" data-action="menu-fiche" aria-label="Plus d'actions">${ic("dots")}</button>
         ${estPC() ? `<button class="btn-icone" data-action="fermer-fiche" aria-label="Fermer">${ic("x")}</button>` : ""}</div></div>
     <div class="fi-actions">
-      <button class="btn" data-action="menu-statut"><i class="dot" style="background:var(--st-${m.statut})"></i>${nomStatut(m.statut, m.type)}${ic("bas", "s")}</button>
       <button class="btn" data-action="ajout-passage">${ic("oeil", "s")}+ ${mots.passage}</button>
       <button class="btn coeur-btn ${m.coeur ? "on" : ""}" data-action="coeur" aria-label="Coup de cœur">${ic("coeur")}</button></div>
+    <!-- Statut (grande pastille avec son icône) et « À revoir / À rejouer / À relire » (petit, discret) au même niveau -->
+    <div class="duo">
+      <button class="pastille-st" data-action="menu-statut" style="--c:var(--st-${m.statut})">${ic(ICONE_STATUT[m.statut])}<span>${nomStatut(m.statut, m.type)}<small>Statut</small></span>${ic("bas", "s fl")}</button>
+      <button class="pastille-rev ${m.revoir ? "on" : ""}" data-action="revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${mots.revoir}</button>
+    </div>
     <div class="fi-blocs">
-      <div class="bloc b-statut"><span class="k">Statut</span><span class="v"><button class="choix" data-action="menu-statut"><i class="dot" style="background:var(--st-${m.statut})"></i>${nomStatut(m.statut, m.type)}${ic("bas", "s")}</button></span></div>
       <div class="bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
         <button class="coeur-btn b-coeur ${m.coeur ? "on" : ""}" data-action="coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>
-      <div class="bloc"><span class="k">${mots.revoir}</span><span class="v"><button class="tog ${m.revoir ? "on" : ""}" data-action="revoir" role="switch" aria-checked="${m.revoir}" aria-label="${mots.revoir}"></button></span></div>
       ${saisons}
       <div class="bloc"><span class="k">${mots.passage}</span><span class="v passages">${passages}<button class="chip plus" data-action="ajout-passage">+ Ajouter</button></span></div>
       ${formPassage}
       ${m.debut ? `<div class="bloc"><span class="k">Commencé</span><span class="v"><button class="chip" data-action="debut">${echapper(texteDate(m.debut))}</button></span></div>` : ""}
-      <div class="bloc"><span class="k">Support</span><span class="v"><select data-champ="support" aria-label="Support">
-        <option value="">—</option>${supports.map(x => `<option ${x === m.support ? "selected" : ""}>${echapper(x)}</option>`).join("")}<option value="__autre">Autre…</option></select></span></div>
+      ${m.type !== "jeu" ? "" : `<div class="bloc"><span class="k">Support</span><span class="v"><select data-champ="support" aria-label="Support">
+        <option value="">—</option>${supports.map(x => `<option ${x === m.support ? "selected" : ""}>${echapper(x)}</option>`).join("")}<option value="__autre">Ajouter un support…</option></select></span></div>`}
       <div class="bloc"><span class="k">Tags</span><span class="v tags">${m.tags.map(t => `<button class="chip tag" data-suppr-tag="${echapper(t)}" title="Enlever">${echapper(t)}<span class="x">×</span></button>`).join("")}
         <input data-champ="tag" list="liste-tags" placeholder="+ tag" aria-label="Ajouter un tag"><datalist id="liste-tags">${tousTags.map(t => `<option value="${echapper(t)}">`).join("")}</datalist></span></div>
       <textarea class="avis" data-champ="avis" rows="2" placeholder="Mon avis…" aria-label="Mon avis">${echapper(m.avis)}</textarea>
-      <div class="va" id="va">${vaHTML(m)}</div>
+      <!-- « Voir aussi » : un bouton sous la fiche, qui la déplie (comme « lire la suite ») -->
+      <button class="va-btn ${ui.vaOuvert ? "ouvert" : ""}" data-action="voir-aussi" aria-expanded="${!!ui.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
+      <div class="va" id="va" ${ui.vaOuvert ? "" : "hidden"}>${ui.vaOuvert ? vaHTML(m) : ""}</div>
     </div>`;
 }
+const ICONE_STATUT = { avoir: "savoir", encours: "sencours", fini: "ok", reserve: "boite", abandon: "x" };
 
 // --- « Voir aussi » : titres proches + même réalisateur / studio / auteur / chaîne ---
 // Les suggestions sont cherchées une fois par fiche (gardées en mémoire tant que l'appli est ouverte).
@@ -724,8 +738,7 @@ function vaHTML(m) {
   const onglets = [["proches", "Titres proches"], ...(m.createur ? [["createur", NOM_CREATEUR[m.type]]] : [])];
   if (!onglets.some(o => o[0] === ui.vaOnglet)) ui.vaOnglet = "proches";
   const liste = v?.[ui.vaOnglet] || [];
-  return `<div class="va-titre">Voir aussi</div>
-    ${onglets.length > 1 ? `<div class="seg va-onglets">${onglets.map(([k, n]) => `<button data-va="${k}" aria-pressed="${ui.vaOnglet === k}">${n}</button>`).join("")}</div>` : ""}
+  return `${onglets.length > 1 ? `<div class="seg va-onglets">${onglets.map(([k, n]) => `<button data-va="${k}" aria-pressed="${ui.vaOnglet === k}">${n}</button>`).join("")}</div>` : ""}
     ${!v || v.etat === "charge" ? `<div class="aj-info">Recherche de suggestions…</div>`
       : v.etat === "erreur" ? `<div class="aj-info">Suggestions indisponibles (pas de réseau ?)</div>`
       : !liste.length ? `<div class="aj-info">Aucune suggestion trouvée.</div>`
@@ -733,7 +746,7 @@ function vaHTML(m) {
 }
 function majVoirAussi() {
   const m = ficheOuverte();
-  if (m && $("va")) $("va").innerHTML = vaHTML(m);
+  if (m && $("va") && ui.vaOuvert) $("va").innerHTML = vaHTML(m);
 }
 function chargerVoirAussi(m) {
   if (vaCache.has(m.id)) return;
@@ -811,7 +824,6 @@ function rendreFiche(opts = {}) {
   }
   const nouvelle = ficheAffichee !== m.id;
   ficheAffichee = m.id;
-  chargerVoirAussi(m);
   if (estPC()) {
     if ($("voile").dataset.quoi === "fiche") fermerVoile();
     $("panneau").hidden = $("redim-panneau").hidden = false;
@@ -894,6 +906,20 @@ function ajouterAvecStatut(infos, type, statut, bouton) {
   const sel = bouton && bouton.closest("[data-ligne]")?.dataset.ligne;
   if (sel) animer(document.querySelector(`[data-ligne="${sel}"] .st4 button.on`), [{ transform: "scale(.6)" }, { transform: "scale(1.25)", offset: .55 }, { transform: "none" }], { duration: 380 });
 }
+// (bêta) Garder une fiche de test pour de vrai : on garde le titre et ses infos (année, créateur,
+// genres, affiche) et on efface tout ce qui est perso (notes, dates, support, tags, avis, saisons).
+function garderEtReinitialiser(m, statut) {
+  const avant = structuredClone(m);
+  Object.assign(m, {
+    statut, test: false, revoir: false, note: 0, coeur: false, passages: [], debut: statut === "encours" ? moisActuel() : "",
+    support: "", tags: [], avis: "", saisons: { actif: false, total: 0, vues: [] }, cree: Date.now()
+  });
+  ecrireMedia(m);
+  if (pageDuStatut(statut) !== ui.page) allerPage(pageDuStatut(statut));
+  rendreFiche(); rendreContenu();
+  afficherToast(`« ${m.titre} » gardée (${nomStatut(statut, m.type)})`, () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); });
+}
+
 // Après un ajout : listes, fenêtre Ajouter et « Voir aussi » se mettent à jour
 function apresAjout() { majAjout(); majVoirAussi(); rendreContenu(); }
 
@@ -1053,10 +1079,28 @@ function ouvrirReglages() {
     <div class="sect">Excel</div>
     <div class="deux"><button class="btn" data-action="export">${ic("telecharger", "s")}Exporter</button><button class="btn" data-action="import">${ic("envoyer", "s")}Importer</button></div>
     <input type="file" id="fichier-import" accept=".xlsx" hidden>
+    <div class="sect">Données</div>
+    ${compteurHTML(nbTest)}
     <div class="sect">Données de test</div>
     <div class="deux"><button class="btn" data-action="test-charger">Charger</button><button class="btn" data-action="test-effacer" ${nbTest ? "" : "disabled"}>Effacer${nbTest ? ` (${nbTest})` : ""}</button></div>
     <p class="version">${VERSION}</p></div>`);
   majSynchro();
+}
+// Compteur : fiches par type, images gardées, poids des données (et part de l'espace gratuit Firebase)
+function compteurHTML(nbTest) {
+  const liste = [...medias.values()];
+  const parType = TYPES.map(t => `${t.nom} ${liste.filter(m => m.type === t.id).length}`).join(" · ");
+  const images = liste.filter(m => m.miniature).length;
+  const octets = new Blob([JSON.stringify({ donnees, medias: liste })]).size;
+  const poids = octets < 1e6 ? `${Math.max(1, Math.round(octets / 1024))} Ko` : `${(octets / 1048576).toFixed(1).replace(".", ",")} Mo`;
+  const part = octets / (1024 ** 3) * 100;   // espace gratuit de Firestore : 1 Go
+  const partTexte = part < 0.1 ? "moins de 0,1 %" : `${part.toFixed(1).replace(".", ",")} %`;
+  return `<div class="groupe compteur">
+    <div class="reg"><span>Fiches</span><span class="val">${liste.length}</span></div>
+    <div class="reg"><span class="resume">${parType}</span></div>
+    <div class="reg"><span>Images gardées</span><span class="val">${images}</span></div>
+    <div class="reg"><span>Poids</span><span class="val">${poids} · ${partTexte} de l'espace gratuit</span></div>
+    <div class="reg"><span>Fiches de test</span><span class="val">${nbTest}</span></div></div>`;
 }
 function ouvrirTheme() {
   ouvrirVoile("theme", estPC() ? "centre" : "plein", `<div class="fenetre regl" role="dialog" aria-label="Thème">
@@ -1394,17 +1438,29 @@ document.addEventListener("click", e => {
       return;
     }
     // --- Fiche ---
-    case "menu-fiche":
+    case "menu-fiche": {
       if (!m) return;
-      ouvrirMenu(el, [{ html: `${ic("crayon", "s")}Modifier` }, { html: `${ic("poubelle", "s")}Supprimer`, danger: true }], i => {
-        if (i === 0) location.replace("#modifier=" + m.id);
-        else {
+      // (bêta) « Garder et réinitialiser » : seulement pour une fiche venue des données de test
+      const choix = [
+        { id: "modifier", html: `${ic("crayon", "s")}Modifier` },
+        ...(m.test ? [{ id: "garder", html: `${ic("ok", "s")}<span>Garder et réinitialiser<small>bêta · efface notes, dates, tags…</small></span>` }] : []),
+        { id: "supprimer", html: `${ic("poubelle", "s")}Supprimer`, danger: true }
+      ];
+      ouvrirMenu(el, choix, i => {
+        const c = choix[i].id;
+        if (c === "modifier") location.replace("#modifier=" + m.id);
+        else if (c === "garder") {
+          // On demande dans quel statut la fiche repart
+          setTimeout(() => ouvrirMenu(el, [{ titre: "Repartir en…" }, ...STATUTS.map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}` }))],
+            k => garderEtReinitialiser(m, STATUTS[k - 1])), 160);
+        } else {
           effacerMedias([m.id]);
           retour();
           afficherToast("Fiche supprimée", () => { ecrireMedia(m); rafraichir(); });
         }
       });
       return;
+    }
     case "menu-statut":
       if (!m) return;
       ouvrirMenu(el, STATUTS.map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}`, coche: s === m.statut })), i => changerStatut(m, STATUTS[i]));
@@ -1414,7 +1470,27 @@ document.addEventListener("click", e => {
       majFiche(m, x => { x.coeur = !x.coeur; });
       if (m.coeur) eclatsCoeur(document.querySelectorAll(".coeur-btn.on"));
       return;
-    case "revoir": if (m) { majFiche(m, x => { x.revoir = !x.revoir; }); etirer(); } return;
+    case "revoir":
+      if (!m) return;
+      majFiche(m, x => { x.revoir = !x.revoir; });
+      animer(document.querySelector(".pastille-rev .ic"), [{ transform: "rotate(0)" }, { transform: "rotate(-360deg)" }], { duration: 500, easing: DOUX });
+      return;
+    case "voir-aussi": {
+      // Déplie / replie « Voir aussi » sous la fiche ; les suggestions ne sont cherchées qu'à l'ouverture
+      if (!m) return;
+      ui.vaOuvert = !ui.vaOuvert;
+      el.classList.toggle("ouvert", ui.vaOuvert);
+      el.setAttribute("aria-expanded", ui.vaOuvert);
+      const zone = $("va");
+      zone.hidden = !ui.vaOuvert;
+      if (ui.vaOuvert) {
+        chargerVoirAussi(m);
+        zone.innerHTML = vaHTML(m);
+        animer(zone, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: DOUX });
+        setTimeout(() => el.scrollIntoView({ block: "start", behavior: animOK() ? "smooth" : "auto" }), 60);
+      }
+      return;
+    }
     case "saisons": if (m) majFiche(m, x => { x.saisons.actif = !x.saisons.actif; if (x.saisons.actif && !x.saisons.total) x.saisons.total = 1; }); return;
     case "saison-plus": if (m) majFiche(m, x => { x.saisons.total++; }); return;
     case "saison-moins": if (m) majFiche(m, x => { x.saisons.total = Math.max(0, x.saisons.total - 1); x.saisons.vues = x.saisons.vues.filter(n => n <= x.saisons.total); }); return;

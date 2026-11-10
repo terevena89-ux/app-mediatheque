@@ -93,10 +93,65 @@ const PAS_UNE_OEUVRE = /personnage|lieu fictif|famille fictive|planète|organisa
 async function pagesWiki(recherche, signal, limite = 10) {
   const fr = await lireJSON("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({
     action: "query", format: "json", origin: "*", generator: "search", gsrsearch: recherche, gsrlimit: String(limite),
-    prop: "pageimages|description|langlinks", piprop: "thumbnail", pithumbsize: "500", pilicense: "any",
-    lllang: "en", lllimit: "max", redirects: "1"
+    prop: "pageimages|description|langlinks|pageprops", piprop: "thumbnail", pithumbsize: "500", pilicense: "any",
+    lllang: "en", lllimit: "max", ppprop: "wikibase_item", redirects: "1"
   }), signal);
   return Object.values(fr.query?.pages || {}).sort((a, b) => a.index - b.index);
+}
+
+// ---------- Jeux : Wikidata + jaquettes Steam ----------
+// Wikidata (la base de données de Wikipédia) connaît pour chaque jeu son studio (P178),
+// ses genres (P136), sa date de sortie (P577) et souvent son numéro Steam (P1733).
+// Avec ce numéro, on prend la jaquette Steam en hauteur (600 × 900), bien nette.
+const wdAPI = params => "https://www.wikidata.org/w/api.php?" + new URLSearchParams({ format: "json", origin: "*", ...params });
+async function entites(ids, props, signal) {
+  ids = [...new Set(ids.filter(Boolean))].slice(0, 50);
+  if (!ids.length) return {};
+  const j = await lireJSON(wdAPI({ action: "wbgetentities", ids: ids.join("|"), props, languages: "fr|en", sitefilter: "frwiki|enwiki" }), signal);
+  return j.entities || {};
+}
+const valeurs = (e, p) => (e?.claims?.[p] || []).map(c => c.mainsnak?.datavalue?.value).filter(Boolean);
+const libelle = e => e?.labels?.fr?.value || e?.labels?.en?.value || "";
+// Année de la toute première sortie (Wikidata liste aussi les ressorties, portages…)
+const premiereSortie = e => { const ans = valeurs(e, "P577").map(v => +String(v.time || "").slice(1, 5)).filter(a => a > 1900); return ans.length ? Math.min(...ans) : null; };
+const majuscule = t => t ? t[0].toUpperCase() + t.slice(1) : t;
+const jaquetteSteam = (id, grande = true) => `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/library_600x900${grande ? "_2x" : ""}.jpg`;
+// L'image existe-t-elle, et est-elle en hauteur ? (certains vieux jeux n'ont pas de jaquette Steam)
+function imageEnHauteur(url) {
+  return new Promise(ok => {
+    const i = new Image(), fin = setTimeout(() => ok(false), 4000);
+    i.onload = () => { clearTimeout(fin); ok(i.naturalHeight >= i.naturalWidth * 1.15); };
+    i.onerror = () => { clearTimeout(fin); ok(false); };
+    i.src = url;
+  });
+}
+async function meilleureJaquette(steam) {
+  if (!steam) return "";
+  if (await imageEnHauteur(jaquetteSteam(steam))) return jaquetteSteam(steam);
+  if (await imageEnHauteur(jaquetteSteam(steam, false))) return jaquetteSteam(steam, false);
+  return "";
+}
+// Complète des résultats de jeux avec Wikidata (studio, genres, année) et la jaquette Steam
+async function enrichirJeux(pages, resultats, signal) {
+  const qids = pages.map(p => p.pageprops?.wikibase_item);
+  const ents = await entites(qids, "claims", signal);
+  const autres = [];
+  qids.forEach(q => [...valeurs(ents[q], "P178"), ...valeurs(ents[q], "P136")].forEach(v => v.id && autres.push(v.id)));
+  const noms = await entites(autres, "labels", signal).catch(() => ({}));
+  await Promise.all(resultats.map(async (r, i) => {
+    const e = ents[qids[i]];
+    if (!e) return;
+    const studios = valeurs(e, "P178").map(v => libelle(noms[v.id])).filter(Boolean);
+    if (studios.length) r.createur = studios.slice(0, 2).join(", ");
+    const genres = valeurs(e, "P136").map(v => majuscule(libelle(noms[v.id]))).filter(Boolean);
+    if (genres.length) r.genres = [...new Set(genres)].slice(0, 3);
+    const an = premiereSortie(e);
+    if (an) r.annee = an;
+    const steam = await meilleureJaquette(valeurs(e, "P1733")[0]);
+    if (steam) r.image = steam;
+    r.info = [r.annee, r.createur, r.genres[0]].filter(Boolean).join(" · ") || r.info;
+  }));
+  return resultats;
 }
 // Garde les pages qui parlent bien du bon type d'œuvre (d'après la description) ;
 // écarte les pages « liste », « 2025 en jeu vidéo »…
@@ -141,7 +196,10 @@ async function versResultats(liste, signal) {
 async function wikipedia(q, type, signal) {
   const pages = await pagesWiki(`${q} ${MOT_CLE[type]}`, signal);
   const bonnes = duBonType(pages, type);
-  return versResultats((bonnes.length ? bonnes : pages).slice(0, 8), signal);
+  const liste = (bonnes.length ? bonnes : pages).slice(0, 8);
+  const res = await versResultats(liste, signal);
+  // Jeux : studio, genres, année (Wikidata) et jaquette Steam
+  return type === "jeu" ? enrichirJeux(liste, res, signal).catch(() => res) : res;
 }
 
 // Point d'entrée de la recherche : selon le type (jeu, film, serie, livre)
@@ -196,6 +254,12 @@ export async function chercherAffiches(type, titre, signal) {
       if (fichiers.has(f)) return;
       fichiers.add(f); ajoute(th.source);
     };
+    // Jeux : la jaquette Steam d'abord (en hauteur, 600 × 900)
+    if (type === "jeu" && pages[0]?.pageprops?.wikibase_item) {
+      const q = pages[0].pageprops.wikibase_item;
+      const steam = await meilleureJaquette(valeurs((await entites([q], "claims", signal).catch(() => ({})))[q], "P1733")[0]);
+      if (steam) ajoute(steam);
+    }
     const anglais = pages.map(p => p.langlinks?.[0]?.["*"]).filter(Boolean)[0];
     if (anglais) {
       const en = await lireJSON(wikiAPI("en", { titles: anglais, prop: "pageimages|langlinks", lllimit: "max" }), signal);
@@ -228,6 +292,13 @@ async function completerSeries(liste, type, signal) {
   return liste;
 }
 
+// Pages Wikipédia → résultats complets (jeux : Wikidata + Steam ; séries : affiche TVmaze)
+async function resultatsDe(pages, type, signal) {
+  let res = await versResultats(pages, signal);
+  if (type === "jeu") res = await enrichirJeux(pages, res, signal).catch(() => res);
+  return completerSeries(res, type, signal);
+}
+
 // ---------- « Voir aussi » ----------
 // proches  : pages Wikipédia « similaires » (fonction morelike de Wikipédia)
 // createur : autres œuvres du même réalisateur / studio / auteur / chaîne
@@ -244,9 +315,31 @@ export async function voirAussi(m, signal) {
     if (!trouvees.length) return [];
     // 2. Pages similaires, du même type
     const similaires = duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 20), type, true)
-      .filter(p => p.title !== trouvees[0].title);
-    return completerSeries(sansDoublons(await versResultats(similaires.slice(0, 14), signal)).slice(0, 10), type, signal);
+      .filter(p => p.title !== trouvees[0].title).slice(0, 14);
+    return sansDoublons(await resultatsDe(similaires, type, signal)).slice(0, 10);
   })().catch(() => []);
+
+  // Jeux : les autres jeux du même studio, d'après Wikidata (plus fiable que le texte des pages)
+  if (type === "jeu") {
+    const studio = (async () => {
+      const trouvees = duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 3), type);
+      const q = trouvees[0]?.pageprops?.wikibase_item;
+      const dev = q && valeurs((await entites([q], "claims", signal))[q], "P178")[0]?.id;
+      if (!dev) return [];
+      const s = await lireJSON(wdAPI({ action: "query", list: "search", srsearch: `haswbstatement:P178=${dev} haswbstatement:P31=Q7889`, srlimit: "30" }), signal);
+      const ents = await entites((s.query?.search || []).map(x => x.title), "claims|sitelinks|labels", signal);
+      const studioNom = libelle((await entites([dev], "labels", signal))[dev]);
+      const res = await Promise.all(Object.values(ents).map(async e => {
+        const an = premiereSortie(e);
+        const r = { titre: sansParentheses(e.sitelinks?.frwiki?.title || libelle(e)), annee: an, createur: studioNom, genres: [] };
+        r.image = await meilleureJaquette(valeurs(e, "P1733")[0]);
+        r.info = [r.annee, studioNom].filter(Boolean).join(" · ");
+        return r;
+      }));
+      return sansDoublons(res.filter(r => r.titre).sort((a, b) => (b.annee || 0) - (a.annee || 0))).slice(0, 12);
+    })().catch(() => []);
+    return { proches: await proches, createur: await studio };
+  }
 
   const createur = (async () => {
     const c = String(m.createur || "").split(",")[0].trim();
@@ -259,8 +352,8 @@ export async function voirAussi(m, signal) {
     }
     // Phrase exacte dans le texte des pages : « réalisé par Ari Aster »…
     const phrase = { film: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
-    const pages = duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 20), type, true);
-    return completerSeries(sansDoublons(await versResultats(pages.slice(0, 14), signal)).slice(0, 10), type, signal);
+    const pages = duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 20), type, true).slice(0, 14);
+    return sansDoublons(await resultatsDe(pages, type, signal)).slice(0, 10);
   })().catch(() => []);
 
   return { proches: await proches, createur: await createur };

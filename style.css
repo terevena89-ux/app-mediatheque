@@ -594,3 +594,31 @@ body.pc .f-horiz .fh-noms { width: 96px; }
 body.pc .fi-aff { width: calc(72px * var(--jq, 1)); height: calc(108px * var(--jq, 1)); }
 body.pc .fi-bandeau .fi-aff { width: calc(84px * var(--jq, 1)); height: calc(126px * var(--jq, 1)); }
 body.pc .fi-flou .fi-aff { width: calc(112px * var(--jq, 1)); height: calc(168px * var(--jq, 1)); }
+
+/* =========================================================
+   Fiche (v0.4) : statut + « À revoir / À rejouer » au même niveau,
+   « Voir aussi » = bouton qui déplie la fiche
+   ========================================================= */
+.duo { display: flex; gap: 8px; margin: 14px 0 4px; align-items: stretch; }
+.pastille-st { flex: 1; min-width: 0; height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface); box-shadow: var(--ob); text-align: left; font-weight: 600; font-size: 14.5px; }
+.pastille-st > .ic:first-child { color: var(--c); width: 20px; height: 20px; }
+.pastille-st span { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.pastille-st small { font-size: 11px; color: var(--muted); font-weight: 400; }
+.pastille-st .fl { margin-left: auto; color: var(--muted); }
+/* À revoir : discret (petit, sans ombre, gris tant qu'il n'est pas activé) */
+.pastille-rev { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border-radius: 6px;
+  border: 1px dashed var(--line); color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.pastille-rev.on { border-style: solid; border-color: color-mix(in srgb, var(--acc) 40%, transparent); background: var(--acc-soft); color: var(--acc); font-weight: 600; }
+.pastille-st:active, .pastille-rev:active { transform: scale(.95); }
+.pastille-st, .pastille-rev { transition: transform .38s var(--ressort), background-color .2s, color .2s, border-color .2s; }
+/* Bouton « Voir aussi » sous la fiche */
+.va-btn { width: 100%; height: 44px; margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface); box-shadow: var(--ob); color: var(--acc); font-weight: 600;
+  transition: transform .38s var(--ressort), background-color .2s; }
+.va-btn:active { transform: scale(.97); transition-duration: .08s; }
+.va-btn .fl { transition: transform .3s var(--doux); }
+.va-btn.ouvert .fl { transform: rotate(180deg); }
+.va { margin-top: 10px; }
+body.pc .duo { margin-top: 12px; }
+body.pc .pastille-st { height: 40px; font-size: 13.5px; }

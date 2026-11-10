@@ -212,10 +212,10 @@ L'Atelier des sorciers|2016|Kamome Shirahama|Manga, Fantasy`
 };
 
 const SUPPORTS = {
-  film: ["Cinéma", "Netflix", "Canal+", "Prime Video", "Disney+", "Blu-ray", "MUBI"],
-  serie: ["Netflix", "HBO Max", "Disney+", "Apple TV+", "Canal+", "Prime Video"],
-  jeu: ["PC", "Switch", "PS5", "Steam Deck"],
-  livre: ["Papier", "Kindle", "Bibliothèque"]
+  film: [],
+  serie: [],
+  jeu: ["PC", "Switch", "Switch 2", "PS4", "PS5", "Téléphone"],   // (support : seulement pour les jeux)
+  livre: []
 };
 const TAGS = ["confort", "à montrer", "grand écran", "avec des amis", "à offrir"];
 const SAISONS = ["hiver", "printemps", "ete", "automne"];
@@ -248,7 +248,7 @@ export function genererDonneesTest(nouvelId) {
       const m = {
         id: nouvelId(), type, titre, annee: +annee, createur, genres: genres.split(",").map(g => g.trim()),
         image: "", miniature: "", statut: "fini", revoir: false, note: 0, coeur: false,
-        passages: [], debut: "", support: pris(SUPPORTS[type]), tags: [], avis: "",
+        passages: [], debut: "", support: SUPPORTS[type].length ? pris(SUPPORTS[type]) : "", tags: [], avis: "",
         saisons: { actif: false, total: 0, vues: [] }, test: true, cree: Date.now() - (n++) * 60000
       };
       const p = r();

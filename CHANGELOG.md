@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.4.0 — 2026-11-10
+- Jeux : recherche complétée par Wikidata (studio, genres, année de 1re sortie) et jaquette Steam en hauteur (600 × 900). « Voir aussi › Même studio » d'après Wikidata ; jaquette Steam en tête de « Choisir l'affiche ».
+- (bêta) Fiche › ⋯ › « Garder et réinitialiser » sur une fiche de test : on choisit le statut, tout le perso est effacé, la fiche est gardée pour de bon.
+- Réglages › Données : nombre de fiches (par type), images gardées, poids et part de l'espace gratuit, fiches de test.
+- Fiche : statut (grande pastille avec son icône) et « À revoir / À rejouer / À relire » (petit, discret) sur la même ligne.
+- Fiche : « Voir aussi » devient un bouton en bas qui déplie la fiche ; les suggestions ne sont cherchées qu'à ce moment-là.
+- « Support » seulement pour les jeux. Liste de départ : PC, Téléphone, Switch, Switch 2, Wii, NDS, Game Boy, PS1 à PS5, Autres (+ « Ajouter un support… »). L'ancienne liste est remplacée une fois (les supports ajoutés à la main sont gardés).
+
 ## v0.3.1 — 2026-11-10
 - Choisir l'affiche : films et jeux proposent maintenant les affiches des autres pays (Wikipédia russe, coréenne, ukrainienne…), ex. 9 pour Midsommar, 12 pour Oppenheimer. Images en largeur retirées de la grille.
 - Affiches plus nettes : la fiche affiche l'image du site en pleine qualité (la copie gardée sert de secours hors ligne), copies gardées plus grandes (240 × 360), images plus grandes demandées aux sites.
