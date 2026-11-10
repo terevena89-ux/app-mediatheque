@@ -1,5 +1,11 @@
 # Médiathèque — journal des nouveautés
 
+## v0.8.0 — 2026-11-10
+- (bêta) « Trier mes fiches » › onglet **Découvrir** : des films connus qui ne sont pas encore dans ma liste, par catégories à cocher (Disney + Pixar + remakes, DreamWorks et autres animés, Ghibli, Marvel, DC, action, Star Wars, classiques, meilleurs films français — ~470 films). Grande affiche ; glisser à droite = Vu, à gauche = Pas intéressé ; boutons À voir / Réserve ; « Voir aussi » sous la carte ; « Annuler » après chaque choix.
+- « Pas intéressé » : caché partout (recherche, Voir aussi, Découvrir), gardé dans un onglet « Pas intéressés » de l'export Excel (relu à l'import).
+- Recherche et Voir aussi : jusqu'à 20 résultats.
+- Appui long sur un résultat : petite bulle avec le titre complet (sur PC : au survol).
+
 ## v0.7.0 — 2026-11-10
 - Dates « Vu » : une période « De … À … » (chaque bout en jour, mois ou année), ou une date seule (« À » vide). Bouton « Grille » : on touche le mois de début puis celui de fin.
 - Saisons = raccourci qui remplit la période (hiver 2025 = déc. 2024 → févr. 2025). Les anciennes dates « été 2024 » deviennent « juin → août 2024 ».

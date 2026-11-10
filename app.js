@@ -27,10 +27,11 @@ import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lire
 import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
 import { genererDonneesTest } from "./test.js";
+import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.7.0";
+const VERSION = "v0.8.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -213,7 +214,7 @@ function dateDuTexte(t) {
 //   passages  : dates ou périodes où je l'ai vu / joué / lu (plusieurs si revu) ;
 //               « 2025-03/ » = commencé en mars, pas encore fini (posé tout seul en passant « En cours »)
 let medias = new Map();
-let donnees = { supports: [...SUPPORTS_DEPART], idees: "" };
+let donnees = { supports: [...SUPPORTS_DEPART], idees: "", rejetes: [] };
 
 function normaliser(id, d) {
   const liste = v => Array.isArray(v) ? [...new Set(v.map(x => String(x || "").trim()).filter(Boolean))] : [];
@@ -250,7 +251,11 @@ function normaliserDonnees(d) {
   return {
     supports,
     supportsJeux: true,
-    idees: typeof d.idees === "string" ? d.idees : ""   // Réglages › Notes
+    idees: typeof d.idees === "string" ? d.idees : "",   // Réglages › Notes
+    // « Pas intéressé » (mode Découvrir) : invisibles dans l'appli, gardés pour ne plus les proposer
+    // et pour l'onglet de l'export Excel. { type, titre, annee, cat, date }
+    rejetes: (Array.isArray(d.rejetes) ? d.rejetes : []).filter(r => r && r.titre).map(r => ({
+      type: TYPES.some(t => t.id === r.type) ? r.type : "film", titre: String(r.titre), annee: +r.annee || null, cat: String(r.cat || ""), date: String(r.date || "") }))
   };
 }
 const trierPassages = l => [...new Set(l)].sort((a, b) => valeurDate(a) - valeurDate(b));
@@ -297,7 +302,7 @@ window.secoursImage = (img, id) => {
 
 // ---------- 3. Stockage ----------
 // Rangement dans Firestore :
-//   users/{mon uid}/app-mediatheque/donnees               -> { supports, idees }
+//   users/{mon uid}/app-mediatheque/donnees               -> { supports, idees, rejetes }
 //   users/{mon uid}/app-mediatheque/donnees/medias/{id}   -> une fiche par document
 // Hors ligne, Firestore garde les modifications et les envoie au retour du réseau.
 // Si deux appareils modifient la même fiche : la dernière modification gagne.
@@ -968,7 +973,7 @@ function chargerVoirAussi(m) {
   if (vaCache.has(m.id)) return;
   vaCache.set(m.id, { etat: "charge" });
   voirAussi(m)
-    .then(r => vaCache.set(m.id, { etat: "fini", ...r }))
+    .then(r => vaCache.set(m.id, { etat: "fini", proches: sansRejetes(r.proches, m.type), createur: sansRejetes(r.createur, m.type) }))
     .catch(() => vaCache.set(m.id, { etat: "erreur" }))
     .finally(() => { if (adresse.fiche === m.id) majVoirAussi(); });
 }
@@ -1120,6 +1125,13 @@ function rendreFenetre(opts = {}) {
 const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
 const titreNu = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();   // sans ponctuation
 const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && titreNu(x.titre) === titreNu(titre));
+// Même œuvre ? même titre (sans ponctuation) et, si les deux années sont connues, à un an près
+// (« Le Roi lion » 1994 ≠ « Le Roi lion » 2019)
+const memeOeuvre = (titreA, anA, titreB, anB) => titreNu(titreA) === titreNu(titreB) && (!anA || !anB || Math.abs(anA - anB) <= 1);
+const dansListe = (type, titre, annee) => [...medias.values()].some(x => x.type === type && memeOeuvre(x.titre, x.annee, titre, annee));
+const estRejete = (type, titre, annee) => donnees.rejetes.some(r => r.type === type && memeOeuvre(r.titre, r.annee, titre, annee));
+// Les « pas intéressé » sont cachés partout : recherche, Voir aussi, Découvrir
+const sansRejetes = (liste, type) => (liste || []).filter(r => !estRejete(type, r.titre, r.annee));
 function boutonsStatut(type, titre, attribut) {
   const m = dejaLa(type, titre);
   return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.map(([s, i]) =>
@@ -1158,7 +1170,7 @@ function garderEtReinitialiser(m, statut) {
 }
 
 // Après un ajout : listes, fenêtre Ajouter et « Voir aussi » se mettent à jour
-function apresAjout() { majAjout(); majVoirAussi(); rendreContenu(); }
+function apresAjout() { majAjout(); majVoirAussi(); majVaDec(); rendreContenu(); }
 
 // --- Ajouter : recherche en ligne + ajout à la main ---
 let aj = null;   // { type, texte, resultats, etat, minuteur, controle }
@@ -1188,7 +1200,7 @@ function majAjout() {
 function ligneResultat(r, type, attribut, cle) {
   return `<div class="aj-r" data-ligne="${cle}">
     <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
-    <span class="aj-t"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
+    <span class="aj-t" title="${echapper(r.titre)}"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
     ${boutonsStatut(type, r.titre, attribut)}</div>`;
 }
 function lancerRecherche() {
@@ -1202,7 +1214,7 @@ function lancerRecherche() {
     try {
       const res = await chercherEnLigne(aj.type, texte, controle.signal);
       if (controle.signal.aborted || !aj) return;
-      aj.resultats = res; aj.etat = "fini";
+      aj.resultats = sansRejetes(res, aj.type); aj.etat = "fini";
     } catch (e) {
       if (controle.signal.aborted || !aj) return;
       aj.resultats = []; aj.etat = "erreur";
@@ -1460,7 +1472,7 @@ const CHAMPS_TRI = {
 };
 let tri = null;   // { etape: "choix" | "cartes" | "fin", types, champs, ids, i, affiches, per (date en saisie), faites }
 const aCompleter = (m, champs) => [...champs].filter(c => CHAMPS_TRI[c].applique(m) && CHAMPS_TRI[c].manque(m));
-const ficheTri = () => tri && tri.etape === "cartes" ? medias.get(tri.ids[tri.i]) : null;
+const ficheTri = () => tri && tri.mode !== "decouvrir" && tri.etape === "cartes" ? medias.get(tri.ids[tri.i]) : null;
 function candidatsTri() {
   return [...medias.values()].filter(m => tri.types.has(m.type) && aCompleter(m, tri.champs).length)
     .sort((a, b) => TYPES.findIndex(t => t.id === a.type) - TYPES.findIndex(t => t.id === b.type) || a.titre.localeCompare(b.titre, "fr"));
@@ -1475,9 +1487,10 @@ function ouvrirTri() {
 }
 function majTri() {
   if (!tri || !$("tri-corps")) return;
+  if (tri.mode === "decouvrir") { majDecouvrir(); return; }
   if (tri.etape === "choix") {
     const n = candidatsTri().length;
-    $("tri-corps").innerHTML = `<div class="sect">Quoi</div>
+    $("tri-corps").innerHTML = `${ongletsTri()}<div class="sect">Quoi</div>
       <div class="puces tri-puces">${TYPES.map(t => `<button class="puce" data-tri-type="${t.id}" aria-pressed="${tri.types.has(t.id)}">${ic(t.id, "s")}${t.nom}</button>`).join("")}</div>
       <div class="sect">À compléter</div>
       <div class="puces tri-puces">${Object.entries(CHAMPS_TRI).map(([k, c]) => `<button class="puce" data-tri-champ="${k}" aria-pressed="${tri.champs.has(k)}">${c.nom}</button>`).join("")}</div>
@@ -1547,6 +1560,220 @@ function avancerTri(sens, complete = false) {
   const a = animer(carte, [{ transform: carte?.style.transform || "none", opacity: 1 }, { transform: `translateX(${-sens * 120}%) rotate(${-sens * 8}deg)`, opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" });
   // (un minuteur plutôt que « fin d'animation » : la carte passe même si l'animation est interrompue)
   if (a) setTimeout(suite, 270); else suite();
+  vibrer();
+}
+
+// ---------- Mode « Découvrir » (Trier mes fiches › Découvrir, bêta) ----------
+// Des films connus (listes de decouvrir.js), un par un, seulement ceux qui ne sont pas déjà dans ma liste
+// ni rejetés. Glisser à droite = Vu, à gauche = Pas intéressé ; boutons À voir / Réserve ; « Voir aussi ».
+// Les « pas intéressé » vont dans donnees.rejetes : cachés partout dans l'appli, gardés pour l'Excel.
+let dec = null;   // { file: [{ titre, annee, cat }], i, infos: Map(clé -> résultat en ligne | null), vaOuvert, va, vaOnglet, faits }
+const ongletsTri = () => `<div class="seg tri-modes">${[["completer", "Compléter"], ["decouvrir", "Découvrir"]].map(([k, n]) =>
+  `<button data-tri-mode="${k}" aria-pressed="${(tri.mode || "completer") === k}">${n}</button>`).join("")}</div>`;
+const cleFilm = f => `${f.titre}|${f.annee}`;
+const catsDec = () => new Set(Array.isArray(reglages.decCats) && reglages.decCats.length ? reglages.decCats : ["disney"]);
+// Films à proposer pour ces catégories (sans ceux déjà dans ma liste ou rejetés, sans doublons entre catégories)
+function filmsDec(cats) {
+  const pris = new Set();
+  return CATEGORIES.filter(c => cats.has(c.id)).flatMap(c => c.films.map(f => ({ ...f, cat: c.id })))
+    .filter(f => {
+      const k = titreNu(f.titre) + f.annee;
+      if (pris.has(k) || dansListe("film", f.titre, f.annee) || estRejete("film", f.titre, f.annee)) return false;
+      pris.add(k); return true;
+    });
+}
+function melanger(t) { for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; } return t; }
+const filmDec = () => dec && tri?.mode === "decouvrir" && tri.etape === "cartes" ? dec.file[dec.i] || null : null;
+// Affiche, réalisateur, genres : cherchés en ligne (Wikipédia), gardés en mémoire ; null = recherche en cours
+function infosDec(f) {
+  const k = cleFilm(f);
+  if (dec.infos.has(k)) return dec.infos.get(k);
+  dec.infos.set(k, null);
+  chercherEnLigne("film", `${f.titre} ${f.annee}`)
+    .then(res => res.find(r => memeOeuvre(r.titre, r.annee, f.titre, f.annee)) || res.find(r => r.annee === f.annee) || {})
+    .catch(() => ({}))
+    .then(r => { dec.infos.set(k, r); if (filmDec() && cleFilm(filmDec()) === k) majCarteDec(); });
+  return null;
+}
+function carteDecHTML(f) {
+  const r = dec.infos.get(cleFilm(f));
+  const cat = CATEGORIES.find(c => c.id === f.cat);
+  return `<div class="dec-carte" id="dec-carte">
+    <span class="dec-etiq vu">Vu</span><span class="dec-etiq non">Non</span>
+    ${vignette({ titre: f.titre, image: r?.image || "", miniature: "" }, "dec-aff", true).replace(" loading=\"lazy\"", "")}
+    <h3>${echapper(f.titre)}</h3>
+    <div class="dec-me">${[f.annee, r?.createur, cat?.nom].filter(Boolean).map(echapper).join(" · ")}</div></div>`;
+}
+function majCarteDec() {
+  const f = filmDec();
+  if (f && $("dec-zone")) $("dec-zone").innerHTML = carteDecHTML(f);
+}
+function majDecouvrir() {
+  const c = $("tri-corps");
+  if (tri.etape === "choix") {
+    const cats = catsDec(), n = filmsDec(cats).length;
+    c.innerHTML = `${ongletsTri()}<div class="sect">Films à découvrir</div>
+      <div class="dec-cats">${CATEGORIES.map(cat => {
+        const k = filmsDec(new Set([cat.id])).length;
+        return `<button class="dec-cat ${cats.has(cat.id) ? "on" : ""}" data-dec-cat="${cat.id}" aria-pressed="${cats.has(cat.id)}"><span class="ck">${ic("ok", "s")}</span><span class="dec-nom">${cat.nom}</span><span class="n">${k}</span></button>`;
+      }).join("")}</div>
+      <button class="btn pri tri-go" data-action="dec-go" ${n ? "" : "disabled"}>${n ? `Commencer · ${n} film${n > 1 ? "s" : ""}` : "Rien à découvrir ici"}</button>`;
+    return;
+  }
+  // On saute les films ajoutés entre-temps (par « Voir aussi » par exemple)
+  while (dec.i < dec.file.length && (dansListe("film", dec.file[dec.i].titre, dec.file[dec.i].annee) || estRejete("film", dec.file[dec.i].titre, dec.file[dec.i].annee))) dec.i++;
+  const f = filmDec();
+  if (!f) {
+    c.innerHTML = `<div class="tri-fin"><b>C'est tout</b><p>${dec.faits} film${dec.faits > 1 ? "s" : ""} rangé${dec.faits > 1 ? "s" : ""}.</p>
+      <div class="deux"><button class="btn" data-action="dec-encore">Autres catégories</button><button class="btn pri" data-action="fermer">Fermer</button></div></div>`;
+    return;
+  }
+  const n = dec.file.length;
+  c.innerHTML = `<div class="tri-prog"><span>${dec.i + 1} / ${n}</span><i><b style="width:${Math.round(dec.i / n * 100)}%"></b></i></div>
+    <div id="dec-zone">${carteDecHTML(f)}</div>
+    <div class="dec-ronds">
+      <button class="dec-rond non" data-dec="rejet" aria-label="Pas intéressé">${ic("x")}<small>Non</small></button>
+      <button class="dec-rond petit" data-dec="avoir" style="--c:var(--st-avoir)">${ic("savoir", "s")}<small>À voir</small></button>
+      <button class="dec-rond petit" data-dec="reserve" style="--c:var(--st-reserve)">${ic("boite", "s")}<small>Réserve</small></button>
+      <button class="dec-rond vu" data-dec="fini" aria-label="Vu">${ic("ok")}<small>Vu</small></button></div>
+    <button class="va-btn ${dec.vaOuvert ? "ouvert" : ""}" data-action="dec-va" aria-expanded="${dec.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
+    <div class="va" id="dec-va" ${dec.vaOuvert ? "" : "hidden"}>${dec.vaOuvert ? decVaHTML() : ""}</div>`;
+  // Affiche du film affiché + des deux suivants (pour qu'elles soient prêtes)
+  infosDec(f);
+  dec.file.slice(dec.i + 1, dec.i + 3).forEach(infosDec);
+}
+function lancerDecouvrir() {
+  dec = { file: melanger(filmsDec(catsDec())), i: 0, infos: new Map(), vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
+  tri.etape = "cartes";
+  majTri();
+}
+// Ranger le film affiché : "fini" (Vu), "avoir", "reserve" ou "rejet" (pas intéressé)
+function actionDec(statut) {
+  const f = filmDec();
+  if (!f) return;
+  const r = dec.infos.get(cleFilm(f)) || {};
+  let annuler;
+  if (statut === "rejet") {
+    const rej = { type: "film", titre: f.titre, annee: f.annee, cat: f.cat, date: jourActuel() };
+    donnees.rejetes.push(rej);
+    sauverDonnees();
+    annuler = () => { donnees.rejetes = donnees.rejetes.filter(x => x !== rej); sauverDonnees(); };
+  } else {
+    const m = creerFiche({ titre: f.titre, annee: f.annee, createur: r.createur || "", genres: r.genres || [], image: r.image || "" }, "film", statut);
+    annuler = () => effacerMedias([m.id]);
+  }
+  const i = dec.i;
+  dec.faits++;
+  afficherToast(`« ${f.titre} » : ${statut === "rejet" ? "pas intéressé" : nomStatut(statut, "film")}`, () => {
+    annuler(); dec.i = i; dec.faits--; dec.vaOuvert = false; dec.va = null; rendreContenu(); majTri();
+  });
+  rendreContenu();
+  // La carte s'en va : à droite (Vu), à gauche (Non), vers le haut (À voir / Réserve)
+  const carte = $("dec-carte");
+  const fin = statut === "fini" ? "translateX(130%) rotate(12deg)" : statut === "rejet" ? "translateX(-130%) rotate(-12deg)" : "translateY(-40%) scale(.7)";
+  const suite = () => {
+    dec.i++; dec.vaOuvert = false; dec.va = null;
+    majTri();
+    animer($("dec-carte"), [{ opacity: 0, transform: "scale(.92)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: DOUX });
+  };
+  const a = animer(carte, [{ transform: carte?.style.transform || "none", opacity: 1 }, { transform: fin, opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" });
+  if (a) setTimeout(suite, 270); else suite();
+  vibrer();
+}
+// « Voir aussi » sous la carte (comme dans la fiche)
+function decVaHTML() {
+  const f = filmDec(), v = dec.va;
+  if (!f || !v || v.etat === "charge") return `<div class="aj-info">Recherche de suggestions…</div>`;
+  if (v.etat === "erreur") return `<div class="aj-info">Suggestions indisponibles (pas de réseau ?)</div>`;
+  const r = dec.infos.get(cleFilm(f)) || {};
+  const onglets = [["proches", "Titres proches"], ...(r.createur ? [["createur", NOM_CREATEUR.film]] : [])];
+  if (!onglets.some(o => o[0] === dec.vaOnglet)) dec.vaOnglet = "proches";
+  const liste = v[dec.vaOnglet] || [];
+  return `${onglets.length > 1 ? `<div class="seg va-onglets">${onglets.map(([k, n]) => `<button data-dec-va-onglet="${k}" aria-pressed="${dec.vaOnglet === k}">${n}</button>`).join("")}</div>` : ""}
+    ${!liste.length ? `<div class="aj-info">Aucune suggestion trouvée.</div>` : liste.map((x, i) => ligneResultat(x, "film", `data-dec-va-res="${i}"`, "dva-" + i)).join("")}`;
+}
+function majVaDec() {
+  const el = $("dec-va");
+  if (!el || !dec) return;
+  el.hidden = !dec.vaOuvert;
+  el.innerHTML = dec.vaOuvert ? decVaHTML() : "";
+  const b = document.querySelector('[data-action="dec-va"]');
+  b?.classList.toggle("ouvert", dec.vaOuvert); b?.setAttribute("aria-expanded", dec.vaOuvert);
+}
+function basculerVaDec() {
+  const f = filmDec();
+  if (!f) return;
+  dec.vaOuvert = !dec.vaOuvert;
+  if (dec.vaOuvert && !dec.va) {
+    const r = dec.infos.get(cleFilm(f)) || {}, cle = cleFilm(f);
+    dec.va = { etat: "charge" };
+    const pourCeFilm = () => filmDec() && cleFilm(filmDec()) === cle;
+    voirAussi({ type: "film", titre: f.titre, createur: r.createur || "", genres: r.genres || [] })
+      .then(x => { if (pourCeFilm()) dec.va = { etat: "fini", proches: sansRejetes(x.proches, "film"), createur: sansRejetes(x.createur, "film") }; })
+      .catch(() => { if (pourCeFilm()) dec.va = { etat: "erreur" }; })
+      .finally(() => { if (pourCeFilm()) majVaDec(); });
+  }
+  majVaDec();
+  if (dec.vaOuvert) $("dec-va")?.scrollIntoView({ block: "nearest", behavior: animOK() ? "smooth" : "auto" });
+}
+// Glisser la carte : à droite = Vu, à gauche = Pas intéressé (l'étiquette apparaît en glissant)
+let glisseDec = null;
+document.addEventListener("pointerdown", e => {
+  const c = e.target.closest("#dec-carte");
+  if (c) glisseDec = { x0: e.clientX, dx: 0, c };
+});
+document.addEventListener("pointermove", e => {
+  if (!glisseDec) return;
+  const dx = glisseDec.dx = e.clientX - glisseDec.x0;
+  if (Math.abs(dx) < 6) return;
+  glisseDec.c.style.transform = `translateX(${dx}px) rotate(${dx / 25}deg)`;
+  glisseDec.c.style.setProperty("--vu", Math.max(0, Math.min(1, dx / 90)));
+  glisseDec.c.style.setProperty("--non", Math.max(0, Math.min(1, -dx / 90)));
+});
+function finGlisseDec(annule) {
+  if (!glisseDec) return;
+  const { dx, c } = glisseDec;
+  glisseDec = null;
+  if (Math.abs(dx) >= 6) { bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 60); }
+  if (!annule && dx > 90) actionDec("fini");
+  else if (!annule && dx < -90) actionDec("rejet");
+  else {
+    c.style.transition = `transform .3s ${DOUX}`; c.style.transform = "none";
+    c.style.setProperty("--vu", 0); c.style.setProperty("--non", 0);
+    setTimeout(() => { c.style.transition = ""; }, 320);
+  }
+}
+document.addEventListener("pointerup", () => finGlisseDec(false));
+document.addEventListener("pointercancel", () => finGlisseDec(true));
+
+// --- Nom complet d'un résultat (Ajouter, Voir aussi) : appui long = petite bulle (PC : survol) ---
+let appuiLong = null;
+document.addEventListener("pointerdown", e => {
+  const l = e.target.closest(".aj-r");
+  if (!l || e.pointerType === "mouse" || e.target.closest(".st4")) return;
+  clearTimeout(appuiLong?.t);
+  appuiLong = { x: e.clientX, y: e.clientY, t: setTimeout(() => montrerBulle(l), 450) };
+});
+document.addEventListener("pointermove", e => {
+  if (appuiLong && Math.hypot(e.clientX - appuiLong.x, e.clientY - appuiLong.y) > 8) { clearTimeout(appuiLong.t); appuiLong = null; }
+});
+["pointerup", "pointercancel", "scroll"].forEach(ev => document.addEventListener(ev, () => {
+  if (appuiLong) { clearTimeout(appuiLong.t); appuiLong = null; }
+  const b = $("bulle"); if (b) b.hidden = true;
+}, true));
+// (pas de menu « copier / sélectionner » du téléphone sur un appui long)
+document.addEventListener("contextmenu", e => { if (e.target.closest(".aj-r")) e.preventDefault(); });
+function montrerBulle(l) {
+  const t = l.querySelector(".aj-t");
+  if (!t) return;
+  let b = $("bulle");
+  if (!b) { b = document.createElement("div"); b.id = "bulle"; b.className = "bulle-titre"; document.body.appendChild(b); }
+  b.innerHTML = `${echapper(t.querySelector("b")?.textContent || "")}<small>${echapper(t.querySelector("small")?.textContent || "")}</small>`;
+  b.hidden = false;
+  const r = l.getBoundingClientRect(), h = b.offsetHeight;
+  b.style.left = Math.max(8, r.left + 8) + "px";
+  b.style.maxWidth = Math.min(innerWidth - 16, 420) + "px";
+  b.style.top = (r.top - h - 8 > 8 ? r.top - h - 8 : r.bottom + 8) + "px";
   vibrer();
 }
 
@@ -1928,6 +2155,19 @@ document.addEventListener("click", e => {
     const mt = ficheTri();
     if (d.triType) { if (tri.types.has(d.triType)) { if (tri.types.size > 1) tri.types.delete(d.triType); } else tri.types.add(d.triType); majTri(); return; }
     if (d.triChamp) { if (tri.champs.has(d.triChamp)) { if (tri.champs.size > 1) tri.champs.delete(d.triChamp); } else tri.champs.add(d.triChamp); majTri(); return; }
+    // Onglets Compléter / Découvrir, et mode Découvrir
+    if (d.triMode) { tri.mode = d.triMode; tri.etape = "choix"; majTri(); return; }
+    if (d.decCat) {
+      const cats = catsDec();
+      if (cats.has(d.decCat)) { if (cats.size > 1) cats.delete(d.decCat); } else cats.add(d.decCat);
+      changerReglage("decCats", [...cats]); majTri(); return;
+    }
+    if (d.action === "dec-go") { lancerDecouvrir(); return; }
+    if (d.action === "dec-encore") { tri.etape = "choix"; majTri(); return; }
+    if (d.dec) { actionDec(d.dec); return; }
+    if (d.action === "dec-va") { basculerVaDec(); return; }
+    if (d.decVaOnglet) { dec.vaOnglet = d.decVaOnglet; majVaDec(); return; }
+    if (d.statut && d.decVaRes !== undefined) { const r = dec?.va?.[dec.vaOnglet]?.[+d.decVaRes]; if (r) ajouterAvecStatut(r, "film", d.statut, el); return; }
     if (d.action === "tri-go") { tri.ids = candidatsTri().map(x => x.id); tri.i = 0; tri.faites = 0; tri.etape = "cartes"; majTri(); return; }
     if (d.action === "tri-encore") { tri.etape = "choix"; majTri(); return; }
     if (d.action === "tri-precedent") { if (tri.i > 0) avancerTri(-1); return; }
@@ -2242,6 +2482,10 @@ const COLONNES = [
   { header: "Saisons", key: "saisons", width: 9 }, { header: "Avis", key: "avis", width: 40 },
   { header: "Image", key: "image", width: 30 }, { header: "Ajouté le", key: "ajoute", width: 12 }, { header: "Test", key: "test", width: 6 }
 ];
+const COLONNES_REJETES = [
+  { header: "Type", key: "type", width: 8 }, { header: "Titre", key: "titre", width: 40 }, { header: "Année", key: "annee", width: 8 },
+  { header: "Catégorie", key: "cat", width: 32 }, { header: "Rejeté le", key: "date", width: 12 }
+];
 const ouiNon = v => v ? "Oui" : "";
 const dateCourte = ms => ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 10) : "";
 async function exporterExcel() {
@@ -2268,6 +2512,10 @@ async function exporterExcel() {
     });
     ws.getColumn("avis").alignment = { wrapText: true, vertical: "middle" };
     ajouterFeuille(classeur, "Supports", [{ header: "Support", key: "s", width: 22 }], donnees.supports.map(s => ({ s })));
+    // « Pas intéressé » (mode Découvrir) : invisibles dans l'appli, mais gardés ici
+    ajouterFeuille(classeur, "Pas intéressés", COLONNES_REJETES, donnees.rejetes.map(r => ({
+      type: typeDe(r.type).un, titre: r.titre, annee: r.annee || "", cat: CATEGORIES.find(c => c.id === r.cat)?.nom || r.cat, date: r.date
+    })));
     await telechargerClasseur(classeur, NOM_APPLI);
   } catch (err) { afficherToast("Export impossible : " + err.message); }
 }
@@ -2281,6 +2529,12 @@ async function importerExcel(champ) {
     const lignes = lireFeuille(classeur.getWorksheet("Médias")).filter(l => l["Titre"]);
     if (!lignes.length) throw new Error("feuille « Médias » introuvable ou vide");
     const supports = lireFeuille(classeur.getWorksheet("Supports")).map(l => l["Support"]).filter(Boolean);
+    // Onglet « Pas intéressés » (s'il existe dans le fichier : sinon on garde ceux de l'appli)
+    const feuilleRejetes = classeur.getWorksheet("Pas intéressés");
+    const rejetes = feuilleRejetes ? normaliserDonnees({ rejetes: lireFeuille(feuilleRejetes).filter(l => l["Titre"]).map(l => ({
+      type: (TYPES.find(x => simplifier(x.un) === simplifier(l["Type"])) || TYPES[1]).id, titre: l["Titre"], annee: l["Année"],
+      cat: CATEGORIES.find(c => c.nom === l["Catégorie"])?.id || l["Catégorie"], date: l["Rejeté le"]
+    })) }).rejetes : null;
     // Les fiches qui ont le même type et le même titre gardent leur identifiant et leur miniature
     const cle = (type, titre) => type + "|" + simplifier(titre);
     // (deux fiches au même titre restent deux fiches : chacune reprend une ancienne à son tour)
@@ -2305,17 +2559,19 @@ async function importerExcel(champ) {
         test: simplifier(l["Test"]) === "oui", cree: a?.cree || (isNaN(ajoute) ? maintenant - i : ajoute)
       });
     });
-    const avant = [...medias.values()], avantSupports = [...donnees.supports];
+    const avant = [...medias.values()], avantSupports = [...donnees.supports], avantRejetes = [...donnees.rejetes];
     const garder = new Set(nouvelles.map(m => m.id));
     effacerMedias(avant.filter(m => !garder.has(m.id)).map(m => m.id));
     ecrireMedias(nouvelles);
-    if (supports.length) { donnees.supports = supports; sauverDonnees(); }
+    if (supports.length) donnees.supports = supports;
+    if (rejetes) donnees.rejetes = rejetes;
+    if (supports.length || rejetes) sauverDonnees();
     retour();
     afficherToast(`Import terminé : ${nouvelles.length} fiches`, () => {
       const remises = new Set(avant.map(m => m.id));
       effacerMedias([...medias.keys()].filter(id => !remises.has(id)));
       ecrireMedias(avant);
-      donnees.supports = avantSupports; sauverDonnees();
+      donnees.supports = avantSupports; donnees.rejetes = avantRejetes; sauverDonnees();
       rafraichir();
     });
     // Les fiches importées sans miniature : on recopie leur affiche en arrière-plan

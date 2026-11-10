@@ -57,7 +57,7 @@ const enHauteur = th => th && th.width && th.height && th.height >= th.width * 1
 // ---------- Séries : TVmaze ----------
 async function series(q, signal) {
   const res = await lireJSON(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`, signal);
-  return res.slice(0, 10).map(({ show: s }) => ({
+  return res.slice(0, 20).map(({ show: s }) => ({
     titre: s.name,
     annee: annee(s.premiered),
     createur: s.network?.name || s.webChannel?.name || "",
@@ -78,7 +78,7 @@ const versLivre = l => ({
 });
 const CHAMPS_OL = "title,author_name,first_publish_year,cover_i,subject";
 async function livres(q, signal) {
-  const res = await lireJSON(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${CHAMPS_OL}&limit=10`, signal);
+  const res = await lireJSON(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${CHAMPS_OL}&limit=20`, signal);
   return (res.docs || []).map(versLivre);
 }
 
@@ -212,9 +212,9 @@ async function versResultats(liste, signal) {
   });
 }
 async function wikipedia(q, type, signal) {
-  const pages = await pagesWiki(`${q} ${MOT_CLE[type]}`, signal);
+  const pages = await pagesWiki(`${q} ${MOT_CLE[type]}`, signal, 30);
   const bonnes = duBonType(pages, type);
-  const liste = (bonnes.length ? bonnes : pages).slice(0, 8);
+  const liste = (bonnes.length ? bonnes : pages).slice(0, 20);
   const res = await versResultats(liste, signal);
   // Jeux : studio, genres, année (Wikidata) et jaquette Steam
   return type === "jeu" ? enrichirJeux(liste, res, signal).catch(() => res) : res;
@@ -339,9 +339,9 @@ export async function voirAussi(m, signal) {
     const trouvees = exactDabord(duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 5), type), m.titre);
     if (!trouvees.length) return [];
     // 2. Pages similaires, du même type
-    const similaires = (await seulementOeuvres(duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 30), type, true)
-      .filter(p => p.title !== trouvees[0].title), type, signal)).slice(0, 14);
-    return sansDoublons(await resultatsDe(similaires, type, signal)).slice(0, 10);
+    const similaires = (await seulementOeuvres(duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 50), type, true)
+      .filter(p => p.title !== trouvees[0].title), type, signal)).slice(0, 24);
+    return sansDoublons(await resultatsDe(similaires, type, signal)).slice(0, 20);
   })().catch(() => []);
 
   // Jeux : les autres jeux du même studio, d'après Wikidata (plus fiable que le texte des pages)
@@ -351,7 +351,7 @@ export async function voirAussi(m, signal) {
       const q = trouvees[0]?.pageprops?.wikibase_item;
       const dev = q && valeurs((await entites([q], "claims", signal))[q], "P178")[0]?.id;
       if (!dev) return [];
-      const s = await lireJSON(wdAPI({ action: "query", list: "search", srsearch: `haswbstatement:P178=${dev} haswbstatement:P31=Q7889`, srlimit: "30" }), signal);
+      const s = await lireJSON(wdAPI({ action: "query", list: "search", srsearch: `haswbstatement:P178=${dev} haswbstatement:P31=Q7889`, srlimit: "40" }), signal);
       const ents = await entites((s.query?.search || []).map(x => x.title), "claims|sitelinks|labels", signal);
       const studioNom = libelle((await entites([dev], "labels", signal))[dev]);
       const res = await Promise.all(Object.values(ents).map(async e => {
@@ -361,7 +361,7 @@ export async function voirAussi(m, signal) {
         r.info = [r.annee, studioNom].filter(Boolean).join(" · ");
         return r;
       }));
-      return sansDoublons(res.filter(r => r.titre).sort((a, b) => (b.annee || 0) - (a.annee || 0))).slice(0, 12);
+      return sansDoublons(res.filter(r => r.titre).sort((a, b) => (b.annee || 0) - (a.annee || 0))).slice(0, 20);
     })().catch(() => []);
     return { proches: await proches, createur: await studio };
   }
@@ -370,15 +370,15 @@ export async function voirAussi(m, signal) {
     const c = String(m.createur || "").split(",")[0].trim();
     if (!c) return [];
     if (type === "livre") {
-      const res = await lireJSON(`https://openlibrary.org/search.json?author=${encodeURIComponent(c)}&fields=${CHAMPS_OL}&limit=20&sort=editions`, signal);
+      const res = await lireJSON(`https://openlibrary.org/search.json?author=${encodeURIComponent(c)}&fields=${CHAMPS_OL}&limit=40&sort=editions`, signal);
       // (seulement les livres où l'auteur figure vraiment)
       const deLui = (res.docs || []).filter(l => (l.author_name || []).some(a => simplifier(a).includes(simplifier(c))));
-      return sansDoublons(deLui.map(versLivre)).slice(0, 10);
+      return sansDoublons(deLui.map(versLivre)).slice(0, 20);
     }
     // Phrase exacte dans le texte des pages : « réalisé par Ari Aster »…
     const phrase = { film: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
-    const pages = (await seulementOeuvres(duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 30), type, true), type, signal)).slice(0, 14);
-    return sansDoublons(await resultatsDe(pages, type, signal)).slice(0, 10);
+    const pages = (await seulementOeuvres(duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 50), type, true), type, signal)).slice(0, 24);
+    return sansDoublons(await resultatsDe(pages, type, signal)).slice(0, 20);
   })().catch(() => []);
 
   return { proches: await proches, createur: await createur };
