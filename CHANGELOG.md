@@ -1,5 +1,8 @@
 # Médiathèque — journal des nouveautés
 
+## v0.8.3 — 2026-11-10
+- Chaque fiche retient si son affiche a été choisie à la main (Choisir l'affiche, Trier, Découvrir, Modifier) ou trouvée automatiquement. Rien de visible pour l'instant (servira à passer en revue les affiches automatiques). Excel : colonne « Affiche choisie ».
+
 ## v0.8.2 — 2026-11-10
 - Téléphone : dans les fenêtres plein écran (Trier, Découvrir…), le message « Annuler » s'affiche tout en bas, plus par-dessus les boutons.
 

@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.8.2";
+const VERSION = "v0.8.3";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -229,6 +229,9 @@ function normaliser(id, d) {
     image: lienValide(d.image),
     miniature: typeof d.miniature === "string" && d.miniature.startsWith("data:image/") ? d.miniature : "",
     mq: +d.mq || 0,   // qualité de la copie : 2 = nouvelle copie plus nette (v0.3.1)
+    // true = j'ai choisi / modifié / enlevé l'affiche moi-même (sinon : affiche trouvée automatiquement).
+    // Rien d'affiché pour l'instant : servira à passer en revue les affiches automatiques.
+    afficheChoisie: !!d.afficheChoisie,
     statut: STATUTS.includes(d.statut) ? d.statut : "avoir",
     revoir: !!d.revoir,
     infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
@@ -1019,8 +1022,8 @@ function majGrilleAffiches(m, enCours, erreur) {
 }
 // fermer = false : on reste où on est (mode Trier)
 function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
-  const avant = { image: m.image, miniature: m.miniature };
-  m.image = image; m.miniature = miniature; m.mq = 2;
+  const avant = { image: m.image, miniature: m.miniature, afficheChoisie: m.afficheChoisie };
+  m.image = image; m.miniature = miniature; m.mq = 2; m.afficheChoisie = true;
   ecrireMedia(m);
   if (image && !miniature) copierImage(image).then(mini => {
     const x = medias.get(m.id);
@@ -1280,7 +1283,8 @@ function enregistrerModif() {
   Object.assign(m, normaliser(m.id, {
     ...m, titre, type: $("mo-type").value, annee: $("mo-annee").value, createur: $("mo-createur").value,
     genres: $("mo-genres").value.split(","), image,
-    miniature: brouillon.miniatureChoisie ?? (changeImage ? "" : m.miniature), mq: brouillon.miniatureChoisie ? 2 : m.mq
+    miniature: brouillon.miniatureChoisie ?? (changeImage ? "" : m.miniature), mq: brouillon.miniatureChoisie ? 2 : m.mq,
+    afficheChoisie: m.afficheChoisie || changeImage || brouillon.miniatureChoisie !== undefined
   }));
   ecrireMedia(m);
   vaCache.delete(m.id);   // titre ou créateur ont pu changer : on recherchera les suggestions
@@ -1647,7 +1651,7 @@ function changerAffDec(url) {
   const f = filmDec();
   if (!f) return;
   const k = cleFilm(f);
-  dec.infos.set(k, { ...(dec.infos.get(k) || {}), image: url });
+  dec.infos.set(k, { ...(dec.infos.get(k) || {}), image: url, choisie: true });
   majCarteDec();
 }
 async function collerAffDec() {
@@ -1709,7 +1713,7 @@ function actionDec(statut) {
     sauverDonnees();
     annuler = () => { donnees.rejetes = donnees.rejetes.filter(x => x !== rej); sauverDonnees(); };
   } else {
-    const m = creerFiche({ titre: f.titre, annee: f.annee, createur: r.createur || "", genres: r.genres || [], image: r.image || "" }, "film", statut);
+    const m = creerFiche({ titre: f.titre, annee: f.annee, createur: r.createur || "", genres: r.genres || [], image: r.image || "", afficheChoisie: !!r.choisie }, "film", statut);
     annuler = () => effacerMedias([m.id]);
   }
   const i = dec.i;
@@ -2538,7 +2542,8 @@ const COLONNES = [
   { header: "Support", key: "support", width: 14 },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
   { header: "Saisons", key: "saisons", width: 9 }, { header: "Avis", key: "avis", width: 40 },
-  { header: "Image", key: "image", width: 30 }, { header: "Ajouté le", key: "ajoute", width: 12 }, { header: "Test", key: "test", width: 6 }
+  { header: "Image", key: "image", width: 30 }, { header: "Affiche choisie", key: "afficheChoisie", width: 14 },
+  { header: "Ajouté le", key: "ajoute", width: 12 }, { header: "Test", key: "test", width: 6 }
 ];
 const COLONNES_REJETES = [
   { header: "Type", key: "type", width: 8 }, { header: "Titre", key: "titre", width: 40 }, { header: "Année", key: "annee", width: 8 },
@@ -2559,7 +2564,7 @@ async function exporterExcel() {
       vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
       genres: m.genres.join(", "), tags: m.tags.join(", "),
       saisons: m.saisons.actif ? `${m.saisons.vues.length}/${m.saisons.total}` : "", avis: m.avis,
-      image: m.image, ajoute: dateCourte(m.cree), test: ouiNon(m.test)
+      image: m.image, afficheChoisie: ouiNon(m.afficheChoisie), ajoute: dateCourte(m.cree), test: ouiNon(m.test)
     })));
     // Miniatures dans la 1re colonne
     liste.forEach((m, i) => {
@@ -2612,7 +2617,7 @@ async function importerExcel(champ) {
         revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature,
+        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui",
         saisons: saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
         test: simplifier(l["Test"]) === "oui", cree: a?.cree || (isNaN(ajoute) ? maintenant - i : ajoute)
       });
