@@ -1,5 +1,12 @@
 # Médiathèque — journal des nouveautés
 
+## v0.6.0 — 2026-11-10
+- (bêta) Réglages › « Trier mes fiches » : les fiches incomplètes défilent une par une ; je choisis les types et quoi compléter (note, date pour la frise, affiche, tags). La carte passe toute seule quand tout est rempli ; glisser à gauche = passer, à droite = revenir.
+- Choisir l'affiche (et Trier) : bouton « Google Images » (recherche « titre affiche / jaquette / couverture ») + « Coller » qui met l'adresse d'image copiée.
+- Fiche d'un titre « à voir » ou « en réserve » : plus de note ni de dates (l'avis reste).
+- Les catégories de la page À voir passent dans le menu Tags, avec « Catégories à la suite » (par défaut) ou « Tout mélangé » (grisés et petits mots gardés).
+- Recherche d'affiches et « Voir aussi » : titres comparés sans la ponctuation, titre exact en premier (ex. « Animal Crossing : New Horizons » ne tombe plus sur la série).
+
 ## v0.5.0 — 2026-11-10
 - Jeux : « Infini ∞ » (déjà joué mais toujours bon pour une petite partie). Dans la fiche, le petit bouton à côté du statut propose au choix « À rejouer » ou « Infini ».
 - Page « À voir / À jouer / À lire » : catégories séparées (À voir, À revoir/rejouer, Infini, En réserve) avec des pastilles en haut pour en mélanger plusieurs. Les titres à revoir / infinis y apparaissent aussi.

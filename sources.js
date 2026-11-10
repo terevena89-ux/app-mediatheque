@@ -232,7 +232,9 @@ export async function chercherEnLigne(type, texte, signal) {
 // ---------- Autres affiches d'un même titre (« Choisir l'affiche ») ----------
 // Séries : les posters de TVmaze ; livres : les couvertures des éditions (Open Library) ;
 // films et jeux : les affiches des Wikipédia anglais et français (en hauteur seulement).
-const memeTitre = (a, b) => { const x = simplifier(a), y = simplifier(b); return x === y || x.includes(y) || y.includes(x); };
+// Même titre ? (sans tenir compte des accents, majuscules et ponctuation : « Animal Crossing : New Horizons » = « Animal Crossing: New Horizons »)
+const sansPonctuation = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();
+const memeTitre = (a, b) => { const x = sansPonctuation(a), y = sansPonctuation(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
 const sansParentheses = t => t.replace(/\s*\([^)]*\)\s*$/, "");
 const https = u => (u || "").replace(/^http:/, "https:");
 export async function chercherAffiches(type, titre, signal) {
@@ -263,7 +265,10 @@ export async function chercherAffiches(type, titre, signal) {
     // Films et jeux : chaque pays a souvent sa propre affiche (sortie en salle locale).
     // On part de la page anglaise, puis on regarde l'image de la même page dans d'autres
     // Wikipédia qui gardent les affiches (russe, ukrainienne, coréenne, hébraïque…).
-    const pages = duBonType(await pagesWiki(`${titre} ${MOT_CLE[type]}`, signal, 6), type).filter(p => memeTitre(sansParentheses(p.title), titre));
+    const proches = duBonType(await pagesWiki(`${titre} ${MOT_CLE[type]}`, signal, 6), type).filter(p => memeTitre(sansParentheses(p.title), titre));
+    // Titre exact d'abord (sinon « Animal Crossing », la série, passerait avant « Animal Crossing : New Horizons »)
+    const exactes = proches.filter(p => sansPonctuation(sansParentheses(p.title)) === sansPonctuation(titre));
+    const pages = exactes.length ? exactes : proches;
     const fichiers = new Set();   // même fichier d'image = même affiche : on ne la garde qu'une fois
     const nomFichier = u => decodeURIComponent(u.split("?")[0].split("/").pop()).replace(/^\d+px-/, "").toLowerCase();
     const garder = th => {
@@ -298,6 +303,8 @@ const wikiAPI = (langue, params) => `https://${langue}.wikipedia.org/w/api.php?`
   action: "query", format: "json", origin: "*", redirects: "1", piprop: "thumbnail", pithumbsize: "500", pilicense: "any", ...params
 });
 
+// Range les pages dont le titre est exactement celui cherché en premier
+const exactDabord = (pages, titre) => [...pages.filter(p => sansPonctuation(sansParentheses(p.title)) === sansPonctuation(titre)), ...pages.filter(p => sansPonctuation(sansParentheses(p.title)) !== sansPonctuation(titre))];
 // Séries sans affiche (Wikipédia montre souvent un titre en largeur) : on demande l'affiche à TVmaze
 async function completerSeries(liste, type, signal) {
   if (type !== "serie") return liste;
@@ -329,7 +336,7 @@ export async function voirAussi(m, signal) {
 
   const proches = (async () => {
     // 1. Retrouver la page Wikipédia de ce titre
-    const trouvees = duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 3), type);
+    const trouvees = exactDabord(duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 5), type), m.titre);
     if (!trouvees.length) return [];
     // 2. Pages similaires, du même type
     const similaires = (await seulementOeuvres(duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 30), type, true)
@@ -340,7 +347,7 @@ export async function voirAussi(m, signal) {
   // Jeux : les autres jeux du même studio, d'après Wikidata (plus fiable que le texte des pages)
   if (type === "jeu") {
     const studio = (async () => {
-      const trouvees = duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 3), type);
+      const trouvees = exactDabord(duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 5), type), m.titre);
       const q = trouvees[0]?.pageprops?.wikibase_item;
       const dev = q && valeurs((await entites([q], "claims", signal))[q], "P178")[0]?.id;
       if (!dev) return [];

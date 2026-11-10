@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.5.0";
+const VERSION = "v0.6.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -510,8 +510,12 @@ function contenuPage(i, type = ui.type) {
       { cle: "abandon", titre: "Abandonnés", liste: trier(duType.filter(m => m.statut === "abandon")), pale: true }];
   }
   sections = sections.filter(s => s.liste.length);
+  // Menu Tags › « Tout mélangé » : une seule liste triée (les fiches en réserve / abandonnées restent grisées)
+  if (reglages.melange?.[type] && sections.length > 1) sections = [{ cle: "tout", titre: "", liste: trier(sections.flatMap(s => s.liste)) }];
   return { sections, tous: sections.flatMap(s => s.liste) };
 }
+// Fiche grisée dans les listes : en réserve ou abandonnée
+const estPale = m => m.statut === "reserve" || m.statut === "abandon";
 const vueActuelle = () => {
   const v = reglages.vues[ui.type] || "liste";
   return v === "tab" && !estPC() ? "liste" : v;
@@ -536,21 +540,18 @@ function carteHTML(m, pale) {
     <span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
 }
 function pageHTML(i) {
+  // (les catégories affichées et « Tout mélangé » se choisissent dans le menu Tags)
   const { sections } = contenuPage(i);
-  // Page « À voir » : pastilles pour choisir les catégories affichées (on peut en mélanger plusieurs)
-  const choix = catsChoisies(ui.type);
-  const cats = i !== 0 ? "" : `<div class="cats">${CATS_AVOIR(ui.type).map(c =>
-    `<button class="puce cat" data-cat="${c.cle}" aria-pressed="${choix.includes(c.cle)}">${echapper(c.titre)}</button>`).join("")}</div>`;
   if (!sections.length) {
-    return cats + `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat" : "Rien ici pour l'instant"}</div>`;
+    return `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat" : "Rien ici pour l'instant"}</div>`;
   }
   const vue = vueActuelle();
   // Titre de section : seulement s'il y a plusieurs sections (ou pour « Abandonnés »)
   const titre = (s, k) => s.titre && (sections.length > 1 || i !== 0) && !(i === 2 && k === 0) ? `<div class="sec">${echapper(s.titre)}</div>` : "";
   if (vue === "mosa") {
-    return cats + `<div class="mosa">${sections.map((s, k) => titre(s, k) + s.liste.map(m => carteHTML(m, s.pale)).join("")).join("")}</div>`;
+    return `<div class="mosa">${sections.map((s, k) => titre(s, k) + s.liste.map(m => carteHTML(m, estPale(m))).join("")).join("")}</div>`;
   }
-  return cats + `<div class="liste ${vue === "compact" ? "compacte" : ""}">${sections.map((s, k) => titre(s, k) + s.liste.map(m => ligneHTML(m, s.pale)).join("")).join("")}</div>`;
+  return `<div class="liste ${vue === "compact" ? "compacte" : ""}">${sections.map((s, k) => titre(s, k) + s.liste.map(m => ligneHTML(m, estPale(m))).join("")).join("")}</div>`;
 }
 
 // --- Barre de gauche (PC) ---
@@ -658,7 +659,7 @@ const poserPlaquetteOnglets = () => poserPlaquette("#onglets .oind", "#onglets .
 const COLS_TABLEAU = ["vg", "titre", "annee", "statut", "note", "coeur", "vu", "support", "tags"];
 function rendreTableau() {
   const { sections, tous } = contenuPage(ui.page);
-  const pales = new Set(sections.filter(s => s.pale).flatMap(s => s.liste));
+  const pales = new Set(tous.filter(estPale));
   const ligne = m => `<tr data-id="${m.id}" class="${adresse.fiche === m.id ? "sel" : ""} ${pales.has(m) ? "pale" : ""}">
     <td data-col="vg">${vignette(m, "mini")}</td>
     <td data-col="titre" class="t-titre">${echapper(m.titre)}</td>
@@ -722,6 +723,8 @@ function rendreTout(opts = {}) {
 // ---------- 6. La fiche ----------
 function ficheHTML(m) {
   const mots = MOTS[m.type];
+  // À voir / en réserve : pas encore vu, donc ni note ni dates (l'avis reste, pour noter une envie)
+  const pasEncoreVu = m.statut === "avoir" || m.statut === "reserve";
   const src = m.miniature || m.image;
   const supports = [...new Set([...donnees.supports, m.support].filter(Boolean))];
   const tousTags = [...new Set([...medias.values()].flatMap(x => x.tags))].sort((a, b) => a.localeCompare(b, "fr"));
@@ -758,12 +761,12 @@ function ficheHTML(m) {
         : `<button class="pastille-rev ${m.revoir ? "on" : ""}" data-action="revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${mots.revoir}</button>`}
     </div>
     <div class="fi-blocs">
-      <div class="bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
-        <button class="coeur-btn b-coeur ${m.coeur ? "on" : ""}" data-action="coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>
+      ${pasEncoreVu ? "" : `<div class="bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
+        <button class="coeur-btn b-coeur ${m.coeur ? "on" : ""}" data-action="coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>`}
       ${saisons}
-      <div class="bloc"><span class="k">${mots.passage}</span><span class="v passages">${passages}<button class="chip plus" data-action="ajout-passage">+ Ajouter</button></span></div>
-      ${formPassage}
-      ${m.debut ? `<div class="bloc"><span class="k">Commencé</span><span class="v"><button class="chip" data-action="debut">${echapper(texteDate(m.debut))}</button></span></div>` : ""}
+      ${pasEncoreVu ? "" : `<div class="bloc"><span class="k">${mots.passage}</span><span class="v passages">${passages}<button class="chip plus" data-action="ajout-passage">+ Ajouter</button></span></div>
+      ${formPassage}`}
+      ${m.debut && !pasEncoreVu ? `<div class="bloc"><span class="k">Commencé</span><span class="v"><button class="chip" data-action="debut">${echapper(texteDate(m.debut))}</button></span></div>` : ""}
       ${m.type !== "jeu" ? "" : `<div class="bloc"><span class="k">Support</span><span class="v"><select data-champ="support" aria-label="Support">
         <option value="">—</option>${supports.map(x => `<option ${x === m.support ? "selected" : ""}>${echapper(x)}</option>`).join("")}<option value="__autre">Ajouter un support…</option></select></span></div>`}
       <div class="bloc"><span class="k">Tags</span><span class="v tags">${m.tags.map(t => `<button class="chip tag" data-suppr-tag="${echapper(t)}" title="Enlever">${echapper(t)}<span class="x">×</span></button>`).join("")}
@@ -818,8 +821,9 @@ function ouvrirAffiche(m) {
     <div class="aff-grille" id="aff-grille"></div>
     <div class="aff-lien" id="aff-lien" hidden><input id="aff-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false">
       <button class="btn pri" data-action="aff-url-ok">OK</button></div>
-    <div class="deux aff-bas"><button class="btn" data-action="aff-fichier">${ic("photo", "s")}Photo / fichier</button>
-      <button class="btn" data-action="aff-lien">${ic("lien", "s")}Coller un lien</button></div>
+    <div class="trois aff-bas"><button class="btn" data-action="aff-google">${ic("cherche", "s")}Google Images</button>
+      <button class="btn" data-action="aff-coller">${ic("lien", "s")}Coller</button>
+      <button class="btn" data-action="aff-fichier">${ic("photo", "s")}Fichier</button></div>
     <input type="file" id="aff-fichier" accept="image/*" hidden></div>`;
   v2.hidden = false;
   animer(v2.querySelector(".fenetre"), estPC() ? [{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }] : [{ transform: "translateY(100%)" }, { transform: "none" }], { duration: 320, easing: DOUX });
@@ -842,16 +846,33 @@ function majGrilleAffiches(m, enCours, erreur) {
     + (enCours ? `<div class="aff-attente">Recherche…</div>` : erreur ? `<div class="aff-attente">Recherche indisponible</div>`
       : !affChoix.liste.length ? `<div class="aff-attente">Aucune autre affiche trouvée</div>` : "");
 }
-function appliquerAffiche(m, { image = "", miniature = "" }) {
+// fermer = false : on reste où on est (mode Trier)
+function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
   const avant = { image: m.image, miniature: m.miniature };
   m.image = image; m.miniature = miniature; m.mq = 2;
   ecrireMedia(m);
   if (image && !miniature) copierImage(image).then(mini => {
     const x = medias.get(m.id);
-    if (mini && x && x.image === image) { x.miniature = mini; x.mq = 2; ecrireMedia(x); rafraichir(); }
+    if (mini && x && x.image === image) { x.miniature = mini; x.mq = 2; ecrireMedia(x); rafraichir(); if (tri) majTri(); }
   });
-  retour();
-  afficherToast("Affiche changée", () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); });
+  if (fermer) retour();
+  afficherToast("Affiche changée", () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); if (tri) majTri(); });
+}
+// Google Images : ouvre la recherche « titre (année) affiche / jaquette / couverture » dans un nouvel onglet.
+// Là-bas : appui long sur l'image › « Copier l'adresse de l'image », puis revenir et toucher « Coller ».
+function ouvrirGoogleImages(m) {
+  const mot = { film: "affiche", serie: "affiche", jeu: "jaquette", livre: "couverture" }[m.type];
+  const q = [m.titre, m.annee, mot].filter(Boolean).join(" ");
+  window.open("https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(q), "_blank", "noopener");
+}
+// « Coller » : lit l'adresse d'image copiée ; si le téléphone refuse, on montre la case pour la coller à la main
+async function collerAffiche(m, fermer, caseLien) {
+  let texte = "";
+  try { texte = await navigator.clipboard.readText(); } catch (e) { /* lecture refusée */ }
+  const url = lienValide((texte.match(/https?:\/\/\S+/) || [""])[0]);
+  if (url) { appliquerAffiche(m, { image: url }, fermer); return; }
+  if (caseLien) { caseLien.hidden = false; caseLien.querySelector("input")?.focus(); }
+  afficherToast(texte ? "Ce qui est copié n'est pas une adresse d'image" : "Copie d'abord l'adresse de l'image (appui long › Copier l'adresse de l'image)");
 }
 
 // Affiche (ou met à jour) la fiche ouverte : panneau à droite sur PC, fenêtre du bas sur téléphone.
@@ -919,6 +940,7 @@ function rendreFenetre(opts = {}) {
   const nouvelle = fenetreAffichee !== cle;
   fenetreAffichee = cle;
   if (f === "ajout") { if (nouvelle) ouvrirAjout(); return; }
+  if (f === "trier") { if (nouvelle) ouvrirTri(); return; }
   if (f === "modifier") { const m = medias.get(adresse.id); if (m) ouvrirModifier(m); else retour(); return; }
   if (f === "reglages") ouvrirReglages();
   else if (f === "theme") ouvrirTheme();
@@ -930,7 +952,8 @@ function rendreFenetre(opts = {}) {
 // À voir (marque-page), En cours (lecture), Vu (coche), Réserve (boîte).
 // Un titre déjà dans ma médiathèque montre son statut : toucher une autre icône le change.
 const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
-const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && simplifier(x.titre) === simplifier(titre));
+const titreNu = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();   // sans ponctuation
+const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && titreNu(x.titre) === titreNu(titre));
 function boutonsStatut(type, titre, attribut) {
   const m = dejaLa(type, titre);
   return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.map(([s, i]) =>
@@ -1129,6 +1152,7 @@ function ouvrirReglages() {
     <input type="file" id="fichier-import" accept=".xlsx" hidden>
     <div class="sect">Données</div>
     ${compteurHTML(nbTest)}
+    <div class="groupe" style="margin-top:8px"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter notes, dates, affiches… une par une</small></span><span class="val">bêta${ic("droite")}</span></button></div>
     <div class="sect">Données de test</div>
     <div class="deux"><button class="btn" data-action="test-charger">Charger</button><button class="btn" data-action="test-effacer" ${nbTest ? "" : "disabled"}>Effacer${nbTest ? ` (${nbTest})` : ""}</button></div>
     <p class="version">${VERSION}</p></div>`);
@@ -1256,6 +1280,136 @@ document.addEventListener("dblclick", e => {
   else if (type === "panneau") changerReglage("largPanneau", null);
   else { delete reglages.colonnes[h.dataset.col]; changerReglage("colonnes", reglages.colonnes); rendreContenu(); }
   appliquerTailles();
+});
+
+// ---------- Mode « Trier » (Réglages › Trier mes fiches) ----------
+// Les fiches incomplètes défilent une par une (comme des cartes) : je remplis ce que j'ai choisi
+// (note, date pour la frise, affiche, tags). Quand tout est rempli, la carte passe toute seule.
+// Glisser à gauche = passer (je verrai plus tard), glisser à droite = revenir à la précédente.
+const CHAMPS_TRI = {
+  note:    { nom: "Note",         applique: m => ["fini", "abandon", "encours"].includes(m.statut), manque: m => !m.note },
+  date:    { nom: "Date (frise)", applique: m => ["fini", "abandon"].includes(m.statut), manque: m => !m.passages.length },
+  affiche: { nom: "Affiche",      applique: () => true, manque: m => !m.image && !m.miniature },
+  tags:    { nom: "Tags",         applique: () => true, manque: m => !m.tags.length }
+};
+let tri = null;   // { etape: "choix" | "cartes" | "fin", types, champs, ids, i, affiches, precision, faites }
+const aCompleter = (m, champs) => [...champs].filter(c => CHAMPS_TRI[c].applique(m) && CHAMPS_TRI[c].manque(m));
+const ficheTri = () => tri && tri.etape === "cartes" ? medias.get(tri.ids[tri.i]) : null;
+function candidatsTri() {
+  return [...medias.values()].filter(m => tri.types.has(m.type) && aCompleter(m, tri.champs).length)
+    .sort((a, b) => TYPES.findIndex(t => t.id === a.type) - TYPES.findIndex(t => t.id === b.type) || a.titre.localeCompare(b.titre, "fr"));
+}
+function ouvrirTri() {
+  tri = tri || { types: new Set([ui.type]), champs: new Set(["note", "date", "affiche"]), affiches: new Map(), precision: "annee" };
+  Object.assign(tri, { etape: "choix", ids: [], i: 0, faites: 0 });
+  ouvrirVoile("trier", estPC() ? "centre" : "plein", `<div class="fenetre tri" role="dialog" aria-label="Trier mes fiches">
+    <div class="fhd"><h2>Trier mes fiches</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
+    <div id="tri-corps"></div></div>`);
+  majTri();
+}
+function majTri() {
+  if (!tri || !$("tri-corps")) return;
+  if (tri.etape === "choix") {
+    const n = candidatsTri().length;
+    $("tri-corps").innerHTML = `<div class="sect">Quoi</div>
+      <div class="puces tri-puces">${TYPES.map(t => `<button class="puce" data-tri-type="${t.id}" aria-pressed="${tri.types.has(t.id)}">${ic(t.id, "s")}${t.nom}</button>`).join("")}</div>
+      <div class="sect">À compléter</div>
+      <div class="puces tri-puces">${Object.entries(CHAMPS_TRI).map(([k, c]) => `<button class="puce" data-tri-champ="${k}" aria-pressed="${tri.champs.has(k)}">${c.nom}</button>`).join("")}</div>
+      <p class="tri-compte">${n ? `${n} fiche${n > 1 ? "s" : ""} à compléter` : "Rien à compléter avec ces choix"}</p>
+      <button class="btn pri tri-go" data-action="tri-go" ${n ? "" : "disabled"}>Commencer</button>
+      <p class="tri-aide">Note et date : seulement pour ce qui est vu / en cours (pas pour la watchlist).</p>`;
+    return;
+  }
+  if (tri.etape === "fin") {
+    $("tri-corps").innerHTML = `<div class="tri-fin"><b>C'est trié</b><p>${tri.faites} fiche${tri.faites > 1 ? "s" : ""} complétée${tri.faites > 1 ? "s" : ""}.</p>
+      <div class="deux"><button class="btn" data-action="tri-encore">Recommencer</button><button class="btn pri" data-action="fermer">Fermer</button></div></div>`;
+    return;
+  }
+  const m = ficheTri();
+  if (!m) { tri.etape = "fin"; majTri(); return; }
+  const blocs = [...tri.champs].filter(c => CHAMPS_TRI[c].applique(m)).map(c => blocTri(c, m)).join("");
+  const n = tri.ids.length;
+  $("tri-corps").innerHTML = `<div class="tri-prog"><span>${tri.i + 1} / ${n}</span><i><b style="width:${Math.round(tri.i / n * 100)}%"></b></i></div>
+    <div class="tri-carte" id="tri-carte">
+      <div class="tri-tete">${vignette(m, "tri-aff", true)}<div class="fi-tt"><h3>${echapper(m.titre)}</h3>
+        <div class="fi-me">${[typeDe(m.type).un, m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}<br>
+          <i class="dot" style="background:var(--st-${m.statut})"></i> ${nomStatut(m.statut, m.type)}</div></div></div>
+      ${blocs}</div>
+    <div class="deux tri-bas"><button class="btn" data-action="tri-passer">${ic("retour", "s")}Passer</button><button class="btn pri" data-action="tri-suivant">Suivant${ic("droite", "s")}</button></div>
+    <p class="tri-aide">Glisse la carte : à gauche pour passer, à droite pour revenir.</p>`;
+  if (tri.champs.has("affiche") && !tri.affiches.has(m.id)) {
+    tri.affiches.set(m.id, null);
+    chercherAffiches(m.type, m.titre).then(urls => { tri.affiches.set(m.id, urls); if (ficheTri()?.id === m.id) majAffichesTri(m); })
+      .catch(() => { tri.affiches.set(m.id, []); if (ficheTri()?.id === m.id) majAffichesTri(m); });
+  }
+}
+function blocTri(c, m) {
+  if (c === "note") return `<div class="tri-bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
+    <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>`;
+  if (c === "date") {
+    const p = tri.precision, an = new Date().getFullYear();
+    return `<div class="tri-bloc col"><span class="k">${MOTS[m.type].passage}${m.passages.length ? ` : ${m.passages.map(x => echapper(texteDate(x))).join(", ")}` : ""}</span>
+      <div class="seg">${[["annee", "Année"], ["saison", "Saison"], ["mois", "Mois"], ["jour", "Jour"]].map(([k, nn]) => `<button data-tri-precision="${k}" aria-pressed="${p === k}">${nn}</button>`).join("")}</div>
+      <div class="pas-champs">${p === "jour" ? `<input id="tri-jour" type="date" value="${jourActuel()}" max="${jourActuel()}">`
+        : p === "mois" ? `<input id="tri-mois" type="month" value="${moisActuel()}" max="${moisActuel()}">`
+        : p === "saison" ? `<select id="tri-saison">${Object.entries(SAISONS).map(([k, v]) => `<option value="${k}">${v.nom}</option>`).join("")}</select><input id="tri-an" type="number" inputmode="numeric" value="${an}" min="1900" max="2100">`
+        : `<input id="tri-an" type="number" inputmode="numeric" value="${an}" min="1900" max="2100">`}
+        <button class="btn pri" data-action="tri-date">Ajouter</button></div></div>`;
+  }
+  if (c === "affiche") return `<div class="tri-bloc col"><span class="k">Affiche</span><div class="tri-affs" id="tri-affs">${affichesTriHTML(m)}</div>
+    <div class="trois"><button class="btn" data-action="tri-google">${ic("cherche", "s")}Google Images</button><button class="btn" data-action="tri-coller">${ic("lien", "s")}Coller</button><button class="btn" data-action="tri-fichier">${ic("photo", "s")}Fichier</button></div>
+    <div class="aff-lien" id="tri-lien" hidden><input id="tri-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false"><button class="btn pri" data-action="tri-url-ok">OK</button></div>
+    <input type="file" id="tri-fichier" accept="image/*" hidden></div>`;
+  return `<div class="tri-bloc"><span class="k">Tags</span><span class="v tags">${m.tags.map(t => `<button class="chip tag" data-tri-suppr-tag="${echapper(t)}">${echapper(t)}<span class="x">×</span></button>`).join("")}
+    <input data-tri-tag list="liste-tags-tri" placeholder="+ tag" aria-label="Ajouter un tag"><datalist id="liste-tags-tri">${[...new Set([...medias.values()].flatMap(x => x.tags))].map(t => `<option value="${echapper(t)}">`).join("")}</datalist></span></div>`;
+}
+function affichesTriHTML(m) {
+  const urls = tri.affiches.get(m.id);
+  if (urls === undefined || urls === null) return `<span class="aj-info">Recherche d'affiches…</span>`;
+  if (!urls.length) return `<span class="aj-info">Aucune affiche trouvée : essaie Google Images.</span>`;
+  return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
+}
+function majAffichesTri(m) { if ($("tri-affs")) $("tri-affs").innerHTML = affichesTriHTML(m); }
+// Après une modif dans le mode Trier : on enregistre, on redessine, et on passe tout seul si tout est rempli
+function majFicheTri(m, modif) {
+  modif(m);
+  ecrireMedia(m);
+  majTri();
+  rendreContenu();
+  if (!aCompleter(m, tri.champs).length) setTimeout(() => { if (ficheTri()?.id === m.id) avancerTri(1, true); }, 550);
+}
+function avancerTri(sens, complete = false) {
+  if (complete) tri.faites++;
+  const carte = $("tri-carte");
+  const suite = () => {
+    tri.i = Math.max(0, tri.i + sens);
+    if (tri.i >= tri.ids.length) tri.etape = "fin";
+    majTri();
+    animer($("tri-carte"), [{ opacity: 0, transform: `translateX(${sens * 40}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: DOUX });
+  };
+  const a = animer(carte, [{ transform: carte?.style.transform || "none", opacity: 1 }, { transform: `translateX(${-sens * 120}%) rotate(${-sens * 8}deg)`, opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" });
+  // (un minuteur plutôt que « fin d'animation » : la carte passe même si l'animation est interrompue)
+  if (a) setTimeout(suite, 270); else suite();
+  vibrer();
+}
+// Glisser la carte
+let glisseTri = null;
+document.addEventListener("pointerdown", e => {
+  const c = e.target.closest("#tri-carte");
+  if (!c || e.target.closest("button, input, select, textarea, .tri-affs")) return;
+  glisseTri = { x0: e.clientX, dx: 0, c };
+});
+document.addEventListener("pointermove", e => {
+  if (!glisseTri) return;
+  glisseTri.dx = e.clientX - glisseTri.x0;
+  glisseTri.c.style.transform = `translateX(${glisseTri.dx}px) rotate(${glisseTri.dx / 30}deg)`;
+});
+document.addEventListener("pointerup", () => {
+  if (!glisseTri) return;
+  const { dx, c } = glisseTri; glisseTri = null;
+  if (dx < -90) avancerTri(1);
+  else if (dx > 90 && tri.i > 0) avancerTri(-1);
+  else { c.style.transition = `transform .3s ${DOUX}`; c.style.transform = "none"; setTimeout(() => { c.style.transition = ""; }, 320); }
 });
 
 // ---------- 8. Gestes et animations ----------
@@ -1475,14 +1629,34 @@ document.addEventListener("click", e => {
       const duType = [...medias.values()].filter(x => x.type === ui.type);
       const tags = [...new Set(duType.flatMap(x => x.tags))].sort((a, b) => a.localeCompare(b, "fr"));
       const genres = [...new Set(duType.flatMap(x => x.genres))].sort((a, b) => a.localeCompare(b, "fr"));
-      const items = [{ nom: "Tout afficher", coche: !ui.filtres.size, cle: "" },
+      const melange = !!reglages.melange?.[ui.type], choix = catsChoisies(ui.type);
+      const items = [
+        // Affichage : catégories à la suite (avec un titre chacune) ou tout mélangé (grisés et petits mots gardés)
+        { titre: "Affichage" },
+        { nom: "Catégories à la suite", cle: "x:suite", coche: !melange },
+        { nom: "Tout mélangé", cle: "x:melange", coche: melange },
+        // Catégories de la page « À voir / À jouer / À lire » (au moins une)
+        { titre: `Page « ${MOTS[ui.type].avoir} »` },
+        ...CATS_AVOIR(ui.type).map(c => ({ nom: c.titre, cle: "c:" + c.cle, coche: choix.includes(c.cle) })),
+        { titre: "Filtres" },
+        { nom: "Tout afficher", coche: !ui.filtres.size, cle: "" },
         ...(tags.length ? [{ titre: "Mes tags" }] : []), ...tags.map(t => ({ nom: t, cle: "t:" + t, coche: ui.filtres.has("t:" + t) })),
         ...(genres.length ? [{ titre: "Genres" }] : []), ...genres.map(g => ({ nom: g, cle: "g:" + g, coche: ui.filtres.has("g:" + g) })),
         { titre: "Filtres (bêta)" }, ...Object.entries(FILTRES_BETA).filter(([, f]) => !f.jeux || ui.type === "jeu").map(([k, f]) => ({ nom: f.nom, cle: "b:" + k, coche: ui.filtres.has("b:" + k) }))];
       ouvrirMenu(el, items, i => {
         const c = items[i].cle;
-        if (!c) ui.filtres.clear(); else if (ui.filtres.has(c)) ui.filtres.delete(c); else ui.filtres.add(c);
+        if (c.startsWith("x:")) {
+          reglages.melange = { ...(reglages.melange || {}), [ui.type]: c === "x:melange" };
+          changerReglage("melange", reglages.melange);
+        } else if (c.startsWith("c:")) {
+          const set = new Set(catsChoisies(ui.type)), k = c.slice(2);
+          if (set.has(k)) { if (set.size > 1) set.delete(k); } else set.add(k);
+          reglages.categories = { ...(reglages.categories || {}), [ui.type]: [...set] };
+          changerReglage("categories", reglages.categories);
+        } else if (!c) ui.filtres.clear();
+        else if (ui.filtres.has(c)) ui.filtres.delete(c); else ui.filtres.add(c);
         rendreOutils(); rendreContenu();
+        cascade($("piste")?.children[ui.page]);
       }, { classe: "menu-long" });
       return;
     }
@@ -1582,6 +1756,8 @@ document.addEventListener("click", e => {
     case "choisir-affiche": if (m) aller(adresseFiche(m.id) + "&affiche"); return;
     case "aff-fichier": $("aff-fichier").click(); return;
     case "aff-lien": $("aff-lien").hidden = false; $("aff-url").focus(); return;
+    case "aff-google": if (m) ouvrirGoogleImages(m); return;
+    case "aff-coller": if (m) collerAffiche(m, true, $("aff-lien")); return;
     case "aff-url-ok": {
       const url = lienValide($("aff-url").value);
       if (!url) { afficherToast("Adresse d'image invalide"); return; }
@@ -1617,6 +1793,35 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.precision) { ui.precision = d.precision; rendreFiche(); return; }
+  // --- Mode Trier ---
+  if (tri) {
+    const mt = ficheTri();
+    if (d.triType) { if (tri.types.has(d.triType)) { if (tri.types.size > 1) tri.types.delete(d.triType); } else tri.types.add(d.triType); majTri(); return; }
+    if (d.triChamp) { if (tri.champs.has(d.triChamp)) { if (tri.champs.size > 1) tri.champs.delete(d.triChamp); } else tri.champs.add(d.triChamp); majTri(); return; }
+    if (d.action === "tri-go") { tri.ids = candidatsTri().map(x => x.id); tri.i = 0; tri.faites = 0; tri.etape = "cartes"; majTri(); return; }
+    if (d.action === "tri-encore") { tri.etape = "choix"; majTri(); return; }
+    if (d.action === "tri-passer") { avancerTri(1); return; }
+    if (d.action === "tri-suivant") { avancerTri(1, mt && !aCompleter(mt, tri.champs).length); return; }
+    if (mt) {
+      if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); return; }
+      if (d.action === "tri-coeur") { majFicheTri(mt, x => { x.coeur = !x.coeur; }); return; }
+      if (d.triPrecision) { tri.precision = d.triPrecision; majTri(); return; }
+      if (d.action === "tri-date") {
+        const p = tri.precision;
+        const date = p === "jour" ? $("tri-jour").value : p === "mois" ? $("tri-mois").value
+          : p === "saison" ? `${$("tri-an").value}-${$("tri-saison").value}` : String($("tri-an").value);
+        if (!dateValide(date)) { afficherToast("Date incomplète"); return; }
+        majFicheTri(mt, x => { x.passages = [...new Set([...x.passages, date])].sort((a, b) => valeurDate(a) - valeurDate(b)); });
+        return;
+      }
+      if (d.triAff !== undefined) { const u = tri.affiches.get(mt.id)?.[+d.triAff]; if (u) { appliquerAffiche(mt, { image: u }, false); majFicheTri(mt, () => {}); } return; }
+      if (d.action === "tri-google") { ouvrirGoogleImages(mt); return; }
+      if (d.action === "tri-coller") { collerAffiche(mt, false, $("tri-lien")).then(() => { if (mt.image) majFicheTri(mt, () => {}); }); return; }
+      if (d.action === "tri-fichier") { $("tri-fichier").click(); return; }
+      if (d.action === "tri-url-ok") { const u = lienValide($("tri-url").value); if (u) { appliquerAffiche(mt, { image: u }, false); majFicheTri(mt, () => {}); } else afficherToast("Adresse d'image invalide"); return; }
+      if (d.triSupprTag) { majFicheTri(mt, x => { x.tags = x.tags.filter(t => t !== d.triSupprTag); }); return; }
+    }
+  }
   // Pastilles de catégories de la page « À voir » : on en garde au moins une
   if (d.cat) {
     const choix = new Set(catsChoisies(ui.type));
@@ -1769,6 +1974,15 @@ document.addEventListener("change", async e => {
     if (v) { donnees.supports[+t.dataset.sup] = v; sauverDonnees(); }
     return;
   }
+  if (t.id === "tri-fichier") {
+    const f = t.files[0]; t.value = "";
+    const mt = ficheTri();
+    if (!f || !mt) return;
+    try { appliquerAffiche(mt, { miniature: await reduireFichier(f) }, false); majFicheTri(mt, () => {}); }
+    catch (err) { afficherToast("Image illisible"); }
+    return;
+  }
+  if (t.dataset.triTag !== undefined) { const mt = ficheTri(); const v = t.value.trim(); if (mt && v && !mt.tags.includes(v)) majFicheTri(mt, x => { x.tags = [...x.tags, v]; }); return; }
   if (t.id === "aff-fichier") {
     const f = t.files[0]; t.value = "";
     if (!f || !m) return;
@@ -1866,6 +2080,7 @@ document.addEventListener("keydown", e => {
     rendreTableau(); $("tab-nouveau")?.focus();
     return;
   }
+  if (t.dataset?.triTag !== undefined && e.key === "Enter") { e.preventDefault(); t.blur(); return; }   // (la case enregistre en perdant le focus)
   if (t.dataset?.champ === "tag" && e.key === "Enter") { e.preventDefault(); const m = ficheOuverte(); if (m) ajouterTag(m, t.value); return; }
   if (e.key === "Escape") {
     if (menu) { fermerMenu(); return; }
