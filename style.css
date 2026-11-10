@@ -208,6 +208,9 @@ body.pc .onglets { display: none; }
    PC
    ========================================================= */
 body.pc { font-size: 13.5px; }
+/* Taille sur PC (Réglages › Taille) : tout l'écran grossit d'un coup, proportions gardées */
+:root[data-taille="grande"] body.pc { zoom: 1.12; }
+:root[data-taille="tresgrande"] body.pc { zoom: 1.25; }
 body.pc #appli { flex-direction: row; }
 .cote { display: none; }
 body.pc .cote { display: flex; flex-direction: column; width: 208px; flex-shrink: 0; background: var(--side); border-right: 1px solid var(--line); padding: 12px 8px; }
@@ -428,6 +431,12 @@ body.pc .bloc { min-height: 40px; }
 /* Modifier */
 .modif-haut { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
 .mo-aff { width: 72px; height: 108px; }
+.modif-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.mo-res { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 12px; margin-bottom: 6px; scrollbar-width: thin; }
+.mo-choix { flex-shrink: 0; width: 76px; display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.mo-choix .vg { width: 76px; height: 114px; background: var(--sunk); }
+.mo-choix small { font-size: 11px; color: var(--muted); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mo-choix.on .vg { outline: 2px solid var(--acc); outline-offset: 2px; }
 .modif-img { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .champ { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12.5px; color: var(--muted); }
 .champ input, .champ select, .modif-img input { height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font-size: 15px; outline: none; }

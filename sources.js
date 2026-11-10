@@ -92,8 +92,10 @@ async function wikipedia(q, type, signal) {
     && (!p.description || new RegExp(type === "jeu" ? "jeu" : "film|téléfilm", "i").test(p.description)));
   const liste = (bonnes.length ? bonnes : pages).slice(0, 8);
 
-  // Affiches manquantes : on regarde la page anglaise correspondante
-  const anglais = liste.filter(p => !p.thumbnail && p.langlinks?.[0]?.["*"]).map(p => p.langlinks[0]["*"]);
+  // Affiches : le Wikipédia français n'a souvent pas le droit de garder les affiches et
+  // montre à la place le logo du titre. On demande donc d'abord l'image de la page anglaise
+  // (qui a la vraie affiche), et on garde l'image française seulement en secours.
+  const anglais = liste.filter(p => p.langlinks?.[0]?.["*"]).map(p => p.langlinks[0]["*"]);
   let imagesEn = {};
   if (anglais.length) {
     try {
@@ -119,7 +121,7 @@ async function wikipedia(q, type, signal) {
     return {
       titre, annee: annee(desc), createur: m ? m[1].trim() : "",
       genres: trouverGenres(desc),
-      image: p.thumbnail?.source || imagesEn[p.langlinks?.[0]?.["*"]] || "",
+      image: imagesEn[p.langlinks?.[0]?.["*"]] || p.thumbnail?.source || "",
       info: desc
     };
   });

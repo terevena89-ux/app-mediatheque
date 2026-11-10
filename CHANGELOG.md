@@ -1,5 +1,10 @@
 # Médiathèque — journal des nouveautés
 
+## v0.2.0 — 2026-11-10
+- Films et jeux : la recherche prend maintenant la vraie affiche (Wikipédia anglais) au lieu du logo du titre.
+- Modifier › « Chercher l'affiche » : choisir la bonne affiche parmi celles trouvées en ligne (pour corriger les fiches déjà ajoutées).
+- PC : réglage « Taille » (Normale / Grande / Très grande), « Grande » par défaut.
+
 ## v0.1.0 — 2026-11-10
 Première version.
 - Jeux, films, séries, livres (+ BD et mangas) : 3 pages par type — À voir (+ en réserve en bas), En cours, Vus (+ abandonnés en bas).

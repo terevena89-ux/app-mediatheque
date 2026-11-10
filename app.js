@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.1.0";
+const VERSION = "v0.2.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -809,9 +809,11 @@ function ouvrirModifier(m) {
   ouvrirVoile("modifier", estPC() ? "centre" : "plein", `<div class="fenetre modif" role="dialog" aria-label="Modifier">
     <div class="fhd"><h2>Modifier</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div class="modif-haut"><span id="mo-apercu">${vignette(m, "mo-aff")}</span>
-      <div class="modif-img"><button class="btn" data-action="choisir-image">${ic("photo", "s")}Choisir une image</button>
+      <div class="modif-img"><div class="modif-btns"><button class="btn" data-action="chercher-affiche">${ic("cherche", "s")}Chercher l'affiche</button>
+        <button class="btn" data-action="choisir-image">${ic("photo", "s")}Fichier</button></div>
         <input id="mo-image" type="text" inputmode="url" placeholder="ou coller l'adresse d'une image" value="${echapper(m.image)}" autocomplete="off" spellcheck="false">
         <input type="file" id="mo-fichier" accept="image/*" hidden></div></div>
+    <div id="mo-res" class="mo-res" hidden></div>
     <label class="champ"><span>Titre</span><input id="mo-titre" value="${echapper(m.titre)}" autocomplete="off"></label>
     <div class="champs2">
       <label class="champ"><span>Type</span><select id="mo-type">${TYPES.map(t => `<option value="${t.id}" ${t.id === m.type ? "selected" : ""}>${t.un}</option>`).join("")}</select></label>
@@ -819,6 +821,20 @@ function ouvrirModifier(m) {
     <label class="champ"><span>${m.type === "livre" ? "Auteur" : m.type === "jeu" ? "Studio" : m.type === "serie" ? "Chaîne / plateforme" : "Réalisation"}</span><input id="mo-createur" value="${echapper(m.createur)}" autocomplete="off"></label>
     <label class="champ"><span>Genres (séparés par des virgules)</span><input id="mo-genres" value="${echapper(m.genres.join(", "))}" autocomplete="off"></label>
     <div class="fbas"><button class="btn" data-action="fermer">Annuler</button><button class="btn pri" data-action="enregistrer-modif">Enregistrer</button></div></div>`);
+}
+// « Chercher l'affiche » : affiches trouvées en ligne pour ce titre, on touche la bonne
+async function chercherAffiche() {
+  const zone = $("mo-res");
+  zone.hidden = false;
+  zone.innerHTML = `<div class="aj-info">Recherche…</div>`;
+  try {
+    const res = (await chercherEnLigne($("mo-type").value, $("mo-titre").value)).filter(r => r.image);
+    brouillon.affiches = res;
+    zone.innerHTML = res.length ? res.map((r, i) => `<button class="mo-choix" data-mo-res="${i}" title="${echapper(r.titre)}">
+      <span class="vg"><img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.closest('button').remove()"></span>
+      <small>${echapper(r.titre)}${r.annee ? ` · ${r.annee}` : ""}</small></button>`).join("")
+      : `<div class="aj-info">Aucune affiche trouvée : colle l'adresse d'une image ci-dessus.</div>`;
+  } catch (e) { zone.innerHTML = `<div class="aj-info">Recherche en ligne indisponible.</div>`; }
 }
 function enregistrerModif() {
   const m = medias.get(brouillon.id);
@@ -859,7 +875,8 @@ function ouvrirReglages() {
     <div class="groupe">
       <button class="reg" data-aller="theme"><span>Thème</span><span class="val">${NOMS_THEME[reglages.theme]}${ic("droite")}</span></button>
       <div class="reg"><span>Couleur</span><span class="accents">${ACCENTS.map(a => `<button class="pastille-acc" data-accent="${a.id}" aria-pressed="${accent === a.id}" title="${a.nom}" aria-label="${a.nom}"></button>`).join("")}</span></div>
-      ${estPC() ? `<div class="reg"><span>Police</span>${seg("police", [["plex", "IBM Plex Sans"], ["figtree", "Figtree"]], reglages.police)}</div>
+      ${estPC() ? `<div class="reg"><span>Taille</span>${seg("taille", [["normale", "Normale"], ["grande", "Grande"], ["tresgrande", "Très grande"]], document.documentElement.dataset.taille)}</div>
+        <div class="reg"><span>Police</span>${seg("police", [["plex", "IBM Plex Sans"], ["figtree", "Figtree"]], reglages.police)}</div>
         <div class="reg"><span>Fiche</span>${seg("fichePC", [["bandeau", "Bandeau"], ["flou", "Fond flou"], ["simple", "Simple"]], reglages.fichePC)}</div>`
       : `<div class="reg"><span>Onglets du bas</span>${seg("onglets", [["t1", "Cases"], ["t2", "Bloc"], ["t3", "Classeur"], ["t4", "Tuiles"]], reglages.onglets)}</div>
         <div class="reg"><span>Vibrations</span>${seg("vibrations", [["oui", "Oui"], ["non", "Non"]], reglages.vibrations)}</div>`}
@@ -901,13 +918,16 @@ function ouvrirMenu(ancre, items, choisir, { classe = "" } = {}) {
   el.innerHTML = items.map((it, i) => it.titre ? `<div class="m-titre">${echapper(it.titre)}</div>` :
     `<button data-m="${i}" class="${it.coche ? "coche" : ""} ${it.danger ? "danger" : ""}">${it.html || echapper(it.nom)}${it.coche ? ic("ok", "m-ok") : ""}</button>`).join("");
   el.hidden = false;
-  // Placé sous le bouton, sans dépasser de l'écran
+  // Placé sous le bouton, sans dépasser de l'écran.
+  // (sur PC, Réglages › Taille agrandit toute la page avec un « zoom » : les positions
+  //  mesurées sont déjà agrandies, on les divise donc par ce zoom avant de placer le menu)
+  const z = parseFloat(getComputedStyle(document.body).zoom) || 1;
   const r = ancre.getBoundingClientRect();
-  const l = el.offsetWidth, h = el.offsetHeight;
-  let x = Math.min(r.left, innerWidth - l - 8), y = r.bottom + 6;
+  const l = el.offsetWidth * z, h = el.offsetHeight * z;
+  let x = Math.max(8, Math.min(r.left, innerWidth - l - 8)), y = r.bottom + 6;
   if (y + h > innerHeight - 8) y = Math.max(8, r.top - h - 6);
-  el.style.left = Math.max(8, x) + "px"; el.style.top = y + "px";
-  el.style.transformOrigin = `${r.left - x + 20}px ${y > r.top ? 0 : h}px`;
+  el.style.left = x / z + "px"; el.style.top = y / z + "px";
+  el.style.transformOrigin = `${(r.left - x) / z + 20}px ${y > r.top ? 0 : h / z}px`;
   menu = { el, items, choisir, ancre };
   animer(el, [{ opacity: 0, transform: "scale(.92) translateY(-4px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: DOUX });
   [...el.querySelectorAll("button")].forEach((b, i) => animer(b, [{ opacity: 0, transform: "translateX(-6px)" }, { opacity: 1, transform: "none" }], { duration: 220, delay: 30 + i * 30, easing: DOUX, fill: "backwards" }));
@@ -1198,6 +1218,7 @@ document.addEventListener("click", e => {
       return;
     // --- Ajouter ---
     case "choisir-image": $("mo-fichier").click(); return;
+    case "chercher-affiche": chercherAffiche(); return;
     case "enregistrer-modif": enregistrerModif(); return;
     // --- Réglages ---
     case "deconnexion":
@@ -1221,6 +1242,14 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.precision) { ui.precision = d.precision; rendreFiche(); return; }
+  if (d.moRes !== undefined && brouillon?.affiches) {
+    const r = brouillon.affiches[+d.moRes];
+    $("mo-image").value = r.image;
+    delete brouillon.miniatureChoisie;
+    $("mo-apercu").innerHTML = vignette({ titre: $("mo-titre").value, image: r.image, miniature: "" }, "mo-aff");
+    document.querySelectorAll(".mo-choix").forEach(b => b.classList.toggle("on", b === el));
+    return;
+  }
   if (d.passage !== undefined && m) {
     const k = +d.passage, date = m.passages[k];
     ouvrirMenu(el, [{ html: `${ic("poubelle", "s")}Enlever ${echapper(texteDate(date))}`, danger: true }], () => {
@@ -1275,6 +1304,7 @@ document.addEventListener("click", e => {
     changerReglage(nom, d.valeur);
     el.closest(".seg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el));
     if (nom === "police") document.documentElement.dataset.police = d.valeur;
+    if (nom === "taille") { document.documentElement.dataset.taille = d.valeur; setTimeout(() => { poserTraitStatut(); poserPastilleVues(); }, 50); }
     if (nom === "onglets") { document.documentElement.dataset.onglets = d.valeur; requestAnimationFrame(poserPlaquetteOnglets); }
     if (nom === "animations") document.documentElement.dataset.anim = d.valeur;
     if (nom === "frise" && adresse.frise) { rendreEntete(); rendreContenu(); }

@@ -17,6 +17,7 @@
       // Accent par défaut : bleu nuit sur le téléphone, pétrole sur le PC
       racine.dataset.accent = r.accent || (pc ? "petrole" : "nuit");
       racine.dataset.police = r.police || "plex";
+      racine.dataset.taille = r.taille || "grande";   // taille de tout l'écran sur PC
       racine.dataset.onglets = r.onglets || "t2";
       racine.dataset.anim = r.animations || "completes";
       var sombreTel = matchMedia("(prefers-color-scheme: dark)");
