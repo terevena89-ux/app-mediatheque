@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Médiathèque</title>
+  <meta name="description" content="Ma watchlist et mon historique : jeux, films, séries, livres.">
+  <meta name="theme-color" content="#FAF7F2">
+  <script>
+    // Réglages de ressenti gardés sur CET appareil (thème, accent, police…).
+    // On les applique AVANT l'affichage de la page, pour éviter un « flash » de couleurs.
+    (function () {
+      var r = {};
+      try { r = JSON.parse(localStorage.getItem("mediatheque-reglages")) || {}; } catch (e) {}
+      var racine = document.documentElement;
+      var pc = matchMedia("(min-width: 900px)").matches;
+      // Accent par défaut : bleu nuit sur le téléphone, pétrole sur le PC
+      racine.dataset.accent = r.accent || (pc ? "petrole" : "nuit");
+      racine.dataset.police = r.police || "plex";
+      racine.dataset.onglets = r.onglets || "t2";
+      racine.dataset.anim = r.animations || "completes";
+      var sombreTel = matchMedia("(prefers-color-scheme: dark)");
+      var choix = r.theme || "auto";
+      function appliquer() {
+        var theme = choix === "auto" ? (sombreTel.matches ? "sombre" : "clair") : choix;
+        racine.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === "sombre" ? "#161A22" : "#FAF7F2";
+      }
+      appliquer();
+      sombreTel.addEventListener("change", appliquer);
+      window.appliquerTheme = function (nouveau) { choix = nouveau; appliquer(); };
+    })();
+  </script>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icones/icone.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icones/icone-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ CONNEXION ============ -->
+<section id="ecran-connexion" class="connexion" hidden>
+  <img src="icones/icone.svg" alt="" width="76" height="76">
+  <h1>Médiathèque</h1>
+  <button id="btn-connexion" class="btn plein">Se connecter avec Google</button>
+  <p id="connexion-erreur" class="erreur" hidden></p>
+</section>
+
+<!-- ============ L'APPLI ============
+     Une seule page pour le téléphone et le PC : la mise en page change avec la largeur
+     de l'écran (classe « pc » ou « tel » posée sur <body> par app.js). -->
+<div id="appli" hidden>
+  <!-- Barre de gauche (PC seulement) : recherche, types, frise, réglages -->
+  <aside id="cote" class="cote"></aside>
+
+  <main id="zone" class="zone">
+    <header id="entete" class="entete"></header>
+    <div id="cherche-tel" class="cherche-tel" hidden>
+      <svg class="ic"><use href="#i-cherche"></use></svg>
+      <input id="recherche-tel" type="search" placeholder="Chercher" aria-label="Chercher">
+      <button class="btn-icone" data-action="fermer-recherche" aria-label="Fermer la recherche"><svg class="ic"><use href="#i-x"></use></svg></button>
+    </div>
+    <div id="outils" class="outils"></div>
+    <div id="contenu" class="contenu"></div>
+  </main>
+
+  <!-- Fiche sur PC : panneau à droite -->
+  <aside id="panneau" class="panneau" hidden></aside>
+
+  <!-- Téléphone : bouton + et onglets du bas -->
+  <button id="fab" class="fab" aria-label="Ajouter"><svg class="ic"><use href="#i-plus"></use></svg></button>
+  <nav id="onglets" class="onglets"></nav>
+</div>
+
+<!-- Fenêtres posées par-dessus (fiche sur téléphone, ajout, réglages…) : remplies par app.js -->
+<div id="voile" class="voile" hidden></div>
+<!-- Petits menus (statut, tri, tags…) -->
+<div id="menu" class="menu-flottant" hidden></div>
+
+<!-- Petit message en bas (avec « Annuler » après une suppression) -->
+<div id="toast" class="toast" hidden>
+  <span id="toast-texte"></span>
+  <button id="toast-annuler">Annuler</button>
+</div>
+
+<!-- Planche d'icônes (trait fin, une seule couleur) : <svg class="ic"><use href="#i-nom"></use></svg> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-jeu" viewBox="0 0 24 24"><path d="M6 9h12a3 3 0 0 1 3 3v2a3 3 0 0 1-5 2l-1-1H9l-1 1a3 3 0 0 1-5-2v-2a3 3 0 0 1 3-3z"/><path d="M8 11v3M6.5 12.5h3M15.5 12h.01M17.5 13.5h.01"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+    <symbol id="i-serie" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M8 3l4 3 4-3"/></symbol>
+    <symbol id="i-livre" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5M8 7h7"/></symbol>
+    <symbol id="i-cherche" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></symbol>
+    <symbol id="i-frise" viewBox="0 0 24 24"><path d="M4 12h16"/><circle cx="7" cy="12" r="2"/><circle cx="14" cy="12" r="2"/><path d="M7 6v4M14 14v4M20 9v6"/></symbol>
+    <symbol id="i-regl" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-coeur" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+    <symbol id="i-tri" viewBox="0 0 24 24"><path d="M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l9 9-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/></symbol>
+    <symbol id="i-bas" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-retour" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-droite" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-crayon" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+    <symbol id="i-poubelle" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
+    <symbol id="i-vliste" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-vcompact" viewBox="0 0 24 24"><path d="M4 5h16M4 9.5h16M4 14h16M4 18.5h16"/></symbol>
+    <symbol id="i-vmosa" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-vtab" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9h18M3 14.5h18M9 4v16"/></symbol>
+    <symbol id="i-savoir" viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></symbol>
+    <symbol id="i-sencours" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 8.5l5 3.5-5 3.5z"/></symbol>
+    <symbol id="i-oeil" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-photo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/></symbol>
+    <symbol id="i-nuage-ok" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M9.5 13l2 2 3.5-3.5"/></symbol>
+    <symbol id="i-nuage-off" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-nuage-att" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M12 16v-5M9.8 13l2.2-2.2 2.2 2.2"/></symbol>
+    <symbol id="i-sortie" viewBox="0 0 24 24"><path d="M14 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3M9 12h12M18 9l3 3-3 3"/></symbol>
+    <symbol id="i-telecharger" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-envoyer" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></symbol>
+  </defs>
+</svg>
+
+<script src="champs-mobile.js" defer></script>
+<script src="notes-idees.js" defer></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
