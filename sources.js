@@ -115,6 +115,24 @@ const libelle = e => e?.labels?.fr?.value || e?.labels?.en?.value || "";
 // Année de la toute première sortie (Wikidata liste aussi les ressorties, portages…)
 const premiereSortie = e => { const ans = valeurs(e, "P577").map(v => +String(v.time || "").slice(1, 5)).filter(a => a > 1900); return ans.length ? Math.min(...ans) : null; };
 const majuscule = t => t ? t[0].toUpperCase() + t.slice(1) : t;
+// « Voir aussi » : seulement de vraies œuvres (pas d'acteurs, de licences, de franchises, de lieux…).
+// Wikidata dit ce qu'est chaque page (propriété P31 « nature de l'élément ») : on garde
+// les films, jeux, séries ou livres selon le type de la fiche.
+const NATURES = {
+  film: ["Q11424", "Q24869", "Q202866", "Q506240", "Q93204", "Q24862", "Q229390", "Q20650540", "Q17517379", "Q1054574", "Q2484376", "Q28968511"],
+  jeu: ["Q7889", "Q865493", "Q4393107", "Q21125433", "Q1066707"],
+  serie: ["Q5398426", "Q1259759", "Q526877", "Q63952888", "Q117467246", "Q581714", "Q15416"],
+  livre: ["Q7725634", "Q8261", "Q47461344", "Q571", "Q1004", "Q14406742", "Q21198342", "Q8274", "Q725377", "Q277759", "Q1667921", "Q49084", "Q35760", "Q1760610", "Q747381", "Q10992055", "Q867335"]
+};
+async function seulementOeuvres(pages, type, signal) {
+  try {
+    const ents = await entites(pages.map(p => p.pageprops?.wikibase_item), "claims", signal);
+    return pages.filter(p => {
+      const e = ents[p.pageprops?.wikibase_item];
+      return e && valeurs(e, "P31").some(v => NATURES[type].includes(v.id));
+    });
+  } catch (e) { return pages; }   // Wikidata ne répond pas : on garde le premier tri
+}
 const jaquetteSteam = (id, grande = true) => `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/library_600x900${grande ? "_2x" : ""}.jpg`;
 // L'image existe-t-elle, et est-elle en hauteur ? (certains vieux jeux n'ont pas de jaquette Steam)
 function imageEnHauteur(url) {
@@ -314,8 +332,8 @@ export async function voirAussi(m, signal) {
     const trouvees = duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 3), type);
     if (!trouvees.length) return [];
     // 2. Pages similaires, du même type
-    const similaires = duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 20), type, true)
-      .filter(p => p.title !== trouvees[0].title).slice(0, 14);
+    const similaires = (await seulementOeuvres(duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 30), type, true)
+      .filter(p => p.title !== trouvees[0].title), type, signal)).slice(0, 14);
     return sansDoublons(await resultatsDe(similaires, type, signal)).slice(0, 10);
   })().catch(() => []);
 
@@ -352,7 +370,7 @@ export async function voirAussi(m, signal) {
     }
     // Phrase exacte dans le texte des pages : « réalisé par Ari Aster »…
     const phrase = { film: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
-    const pages = duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 20), type, true).slice(0, 14);
+    const pages = (await seulementOeuvres(duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 30), type, true), type, signal)).slice(0, 14);
     return sansDoublons(await resultatsDe(pages, type, signal)).slice(0, 10);
   })().catch(() => []);
 

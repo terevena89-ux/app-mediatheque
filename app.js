@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.4.0";
+const VERSION = "v0.5.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -187,6 +187,7 @@ function normaliser(id, d) {
     mq: +d.mq || 0,   // qualité de la copie : 2 = nouvelle copie plus nette (v0.3.1)
     statut: STATUTS.includes(d.statut) ? d.statut : "avoir",
     revoir: !!d.revoir,
+    infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
     coeur: !!d.coeur,
     passages: liste(d.passages).filter(dateValide).sort((a, b) => valeurDate(a) - valeurDate(b)),
@@ -441,6 +442,18 @@ async function ameliorerMiniatures() {
 // ---------- 5. Affichage ----------
 
 // Fiches visibles d'une page (type actuel, recherche, filtres, tri)
+// (bêta) Filtres pour trier mes données : fiches de test, fiches incomplètes…
+const FILTRES_BETA = {
+  test:     { nom: "Fiches de test",     test: m => m.test },
+  image:    { nom: "Sans affiche",       test: m => !m.image && !m.miniature },
+  note:     { nom: "Sans note",          test: m => !m.note },
+  date:     { nom: "Sans date",          test: m => !m.passages.length },
+  genre:    { nom: "Sans genre",         test: m => !m.genres.length },
+  tag:      { nom: "Sans tag",           test: m => !m.tags.length },
+  createur: { nom: "Sans créateur",      test: m => !m.createur },
+  annee:    { nom: "Sans année",         test: m => !m.annee },
+  support:  { nom: "Sans support",       test: m => !m.support, jeux: true }
+};
 function correspond(m) {
   const mots = simplifier(ui.recherche).split(/\s+/).filter(Boolean);
   if (mots.length) {
@@ -451,6 +464,7 @@ function correspond(m) {
     const [genre, valeur] = [f[0], f.slice(2)];
     if (genre === "t" && !m.tags.includes(valeur)) return false;
     if (genre === "g" && !m.genres.includes(valeur)) return false;
+    if (genre === "b" && !FILTRES_BETA[valeur]?.test(m)) return false;
   }
   return true;
 }
@@ -466,14 +480,37 @@ function trier(liste) {
   }[tri];
   return liste.sort(f);
 }
+// Catégories de la page « À voir / À jouer / À lire » : chacune a sa section,
+// et les pastilles en haut de la page permettent d'en mélanger plusieurs.
+const CATS_AVOIR = type => [
+  { cle: "avoir", titre: MOTS[type].avoir },
+  { cle: "revoir", titre: MOTS[type].revoir },
+  ...(type === "jeu" ? [{ cle: "infini", titre: "Infini ∞" }] : []),
+  { cle: "reserve", titre: "En réserve", pale: true }
+];
+function catsChoisies(type) {
+  const c = reglages.categories?.[type];
+  const possibles = CATS_AVOIR(type).map(x => x.cle);
+  return Array.isArray(c) && c.some(x => possibles.includes(x)) ? c.filter(x => possibles.includes(x)) : possibles;
+}
+// Dans quelle catégorie de « À voir » tombe une fiche (une seule) ?
+const categorieAvoir = m => m.statut === "avoir" ? "avoir" : m.statut === "reserve" ? "reserve"
+  : (m.type === "jeu" && m.infini) ? "infini" : m.revoir ? "revoir" : null;
+// Contenu d'une page : des sections { cle, titre, liste, pale }
 function contenuPage(i, type = ui.type) {
-  const p = PAGES[i];
   const duType = [...medias.values()].filter(m => m.type === type && correspond(m));
-  return {
-    principaux: trier(duType.filter(m => p.statuts.includes(m.statut))),
-    bas: p.bas ? trier(duType.filter(m => m.statut === p.bas)) : [],
-    titreBas: p.bas === "reserve" ? "En réserve" : p.bas === "abandon" ? "Abandonnés" : ""
-  };
+  let sections;
+  if (i === 0) {
+    const choix = catsChoisies(type);
+    sections = CATS_AVOIR(type).filter(c => choix.includes(c.cle)).map(c => ({ ...c, liste: trier(duType.filter(m => categorieAvoir(m) === c.cle)) }));
+  } else if (i === 1) {
+    sections = [{ cle: "encours", titre: "", liste: trier(duType.filter(m => m.statut === "encours")) }];
+  } else {
+    sections = [{ cle: "fini", titre: "", liste: trier(duType.filter(m => m.statut === "fini")) },
+      { cle: "abandon", titre: "Abandonnés", liste: trier(duType.filter(m => m.statut === "abandon")), pale: true }];
+  }
+  sections = sections.filter(s => s.liste.length);
+  return { sections, tous: sections.flatMap(s => s.liste) };
 }
 const vueActuelle = () => {
   const v = reglages.vues[ui.type] || "liste";
@@ -486,28 +523,34 @@ function meta(m) {
   if (m.type === "serie" && m.saisons.actif && m.saisons.total) morceaux.push(`S${m.saisons.vues.length}/${m.saisons.total}`);
   return morceaux.filter(Boolean).map(echapper).join(" · ");
 }
+// Petit mot à côté du titre : « à revoir », « ∞ infini »
+const marque = m => (m.type === "jeu" && m.infini) ? `<span class="rev">∞ infini</span>` : m.revoir ? `<span class="rev">${echapper(MOTS[m.type].revoir.toLowerCase())}</span>` : "";
 function ligneHTML(m, pale) {
   return `<button class="it ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m)}
-    <span class="it-txt"><span class="it-ti">${echapper(m.titre)}${m.revoir ? `<span class="rev">${echapper(MOTS[m.type].revoir.toLowerCase())}</span>` : ""}</span><span class="it-me">${meta(m)}</span></span>
+    <span class="it-txt"><span class="it-ti">${echapper(m.titre)}${marque(m)}</span><span class="it-me">${meta(m)}</span></span>
     <span class="it-rt">${m.coeur ? ic("coeur", "coeur") : ""}${etoiles(m.note)}</span></button>`;
 }
 function carteHTML(m, pale) {
   return `<button class="mc ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m, "grand")}
-    ${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}
+    ${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${(m.type === "jeu" && m.infini) ? `<span class="mc-rev">∞</span>` : m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}
     <span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
 }
 function pageHTML(i) {
-  const { principaux, bas, titreBas } = contenuPage(i);
-  if (!principaux.length && !bas.length) {
-    return `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat" : "Rien ici pour l'instant"}</div>`;
+  const { sections } = contenuPage(i);
+  // Page « À voir » : pastilles pour choisir les catégories affichées (on peut en mélanger plusieurs)
+  const choix = catsChoisies(ui.type);
+  const cats = i !== 0 ? "" : `<div class="cats">${CATS_AVOIR(ui.type).map(c =>
+    `<button class="puce cat" data-cat="${c.cle}" aria-pressed="${choix.includes(c.cle)}">${echapper(c.titre)}</button>`).join("")}</div>`;
+  if (!sections.length) {
+    return cats + `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat" : "Rien ici pour l'instant"}</div>`;
   }
   const vue = vueActuelle();
+  // Titre de section : seulement s'il y a plusieurs sections (ou pour « Abandonnés »)
+  const titre = (s, k) => s.titre && (sections.length > 1 || i !== 0) && !(i === 2 && k === 0) ? `<div class="sec">${echapper(s.titre)}</div>` : "";
   if (vue === "mosa") {
-    return `<div class="mosa">${principaux.map(m => carteHTML(m)).join("")}
-      ${bas.length ? `<div class="sec">${titreBas}</div>${bas.map(m => carteHTML(m, true)).join("")}` : ""}</div>`;
+    return cats + `<div class="mosa">${sections.map((s, k) => titre(s, k) + s.liste.map(m => carteHTML(m, s.pale)).join("")).join("")}</div>`;
   }
-  return `<div class="liste ${vue === "compact" ? "compacte" : ""}">${principaux.map(m => ligneHTML(m)).join("")}
-    ${bas.length ? `<div class="sec">${titreBas}</div>${bas.map(m => ligneHTML(m, true)).join("")}` : ""}</div>`;
+  return cats + `<div class="liste ${vue === "compact" ? "compacte" : ""}">${sections.map((s, k) => titre(s, k) + s.liste.map(m => ligneHTML(m, s.pale)).join("")).join("")}</div>`;
 }
 
 // --- Barre de gauche (PC) ---
@@ -614,8 +657,9 @@ const poserPlaquetteOnglets = () => poserPlaquette("#onglets .oind", "#onglets .
 // --- Le tableau (PC) : on écrit directement dans les cases ---
 const COLS_TABLEAU = ["vg", "titre", "annee", "statut", "note", "coeur", "vu", "support", "tags"];
 function rendreTableau() {
-  const { principaux, bas } = contenuPage(ui.page);
-  const ligne = m => `<tr data-id="${m.id}" class="${adresse.fiche === m.id ? "sel" : ""} ${bas.includes(m) ? "pale" : ""}">
+  const { sections, tous } = contenuPage(ui.page);
+  const pales = new Set(sections.filter(s => s.pale).flatMap(s => s.liste));
+  const ligne = m => `<tr data-id="${m.id}" class="${adresse.fiche === m.id ? "sel" : ""} ${pales.has(m) ? "pale" : ""}">
     <td data-col="vg">${vignette(m, "mini")}</td>
     <td data-col="titre" class="t-titre">${echapper(m.titre)}</td>
     <td data-col="annee">${m.annee || ""}</td>
@@ -633,7 +677,7 @@ function rendreTableau() {
   $("contenu").innerHTML = `<div class="tab-wrap"><table class="tableau" style="min-width:${fixe + 160}px">
     <colgroup>${COLS.map(([k, , w]) => `<col data-col="${k}" ${w ? `style="width:${reglages.colonnes[k] || w}px"` : ""}>`).join("")}</colgroup>
     <thead><tr>${COLS.map(([k, n, w], i) => `<th>${n}${w && k !== "vg" ? `<i class="redim-col" data-col="${k}" title="Glisser pour élargir"></i>` : ""}${i === 0 ? "" : ""}</th>`).join("")}</tr></thead>
-    <tbody>${[...principaux, ...bas].map(ligne).join("")}
+    <tbody>${tous.map(ligne).join("")}
       <tr class="nouveau"><td>${ic("plus", "s")}</td><td colspan="8"><input id="tab-nouveau" placeholder="Nouveau titre… (Entrée pour ajouter)" autocomplete="off"></td></tr></tbody></table></div>`;
 }
 
@@ -708,7 +752,10 @@ function ficheHTML(m) {
     <!-- Statut (grande pastille avec son icône) et « À revoir / À rejouer / À relire » (petit, discret) au même niveau -->
     <div class="duo">
       <button class="pastille-st" data-action="menu-statut" style="--c:var(--st-${m.statut})">${ic(ICONE_STATUT[m.statut])}<span>${nomStatut(m.statut, m.type)}<small>Statut</small></span>${ic("bas", "s fl")}</button>
-      <button class="pastille-rev ${m.revoir ? "on" : ""}" data-action="revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${mots.revoir}</button>
+      ${m.type === "jeu"
+        // Jeux : un seul petit bouton, au choix « À rejouer » ou « Infini ∞ » (ou rien)
+        ? `<button class="pastille-rev ${m.revoir || m.infini ? "on" : ""}" data-action="menu-rejouer">${m.infini ? `${ic("infini", "s")}Infini` : `${ic("rejouer", "s")}À rejouer`}${ic("bas", "s")}</button>`
+        : `<button class="pastille-rev ${m.revoir ? "on" : ""}" data-action="revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${mots.revoir}</button>`}
     </div>
     <div class="fi-blocs">
       <div class="bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
@@ -824,6 +871,7 @@ function rendreFiche(opts = {}) {
   }
   const nouvelle = ficheAffichee !== m.id;
   ficheAffichee = m.id;
+  chargerVoirAussi(m);   // « Voir aussi » est cherché tout de suite, en arrière-plan : le bouton ne fait qu'afficher
   if (estPC()) {
     if ($("voile").dataset.quoi === "fiche") fermerVoile();
     $("panneau").hidden = $("redim-panneau").hidden = false;
@@ -1429,7 +1477,8 @@ document.addEventListener("click", e => {
       const genres = [...new Set(duType.flatMap(x => x.genres))].sort((a, b) => a.localeCompare(b, "fr"));
       const items = [{ nom: "Tout afficher", coche: !ui.filtres.size, cle: "" },
         ...(tags.length ? [{ titre: "Mes tags" }] : []), ...tags.map(t => ({ nom: t, cle: "t:" + t, coche: ui.filtres.has("t:" + t) })),
-        ...(genres.length ? [{ titre: "Genres" }] : []), ...genres.map(g => ({ nom: g, cle: "g:" + g, coche: ui.filtres.has("g:" + g) }))];
+        ...(genres.length ? [{ titre: "Genres" }] : []), ...genres.map(g => ({ nom: g, cle: "g:" + g, coche: ui.filtres.has("g:" + g) })),
+        { titre: "Filtres (bêta)" }, ...Object.entries(FILTRES_BETA).filter(([, f]) => !f.jeux || ui.type === "jeu").map(([k, f]) => ({ nom: f.nom, cle: "b:" + k, coche: ui.filtres.has("b:" + k) }))];
       ouvrirMenu(el, items, i => {
         const c = items[i].cle;
         if (!c) ui.filtres.clear(); else if (ui.filtres.has(c)) ui.filtres.delete(c); else ui.filtres.add(c);
@@ -1469,6 +1518,17 @@ document.addEventListener("click", e => {
       if (!m) return;
       majFiche(m, x => { x.coeur = !x.coeur; });
       if (m.coeur) eclatsCoeur(document.querySelectorAll(".coeur-btn.on"));
+      return;
+    case "menu-rejouer":
+      if (!m) return;
+      ouvrirMenu(el, [
+        { html: `${ic("x", "s")}Rien`, coche: !m.revoir && !m.infini },
+        { html: `${ic("rejouer", "s")}<span>À rejouer<small>pour une vraie nouvelle partie</small></span>`, coche: m.revoir },
+        { html: `${ic("infini", "s")}<span>Infini ∞<small>toujours bon pour une petite partie</small></span>`, coche: m.infini }
+      ], i => {
+        majFiche(m, x => { x.revoir = i === 1; x.infini = i === 2; });
+        animer(document.querySelector(".pastille-rev .ic"), [{ transform: "scale(.6)" }, { transform: "scale(1.25)", offset: .55 }, { transform: "none" }], { duration: 380 });
+      });
       return;
     case "revoir":
       if (!m) return;
@@ -1557,6 +1617,17 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.precision) { ui.precision = d.precision; rendreFiche(); return; }
+  // Pastilles de catégories de la page « À voir » : on en garde au moins une
+  if (d.cat) {
+    const choix = new Set(catsChoisies(ui.type));
+    if (choix.has(d.cat)) { if (choix.size > 1) choix.delete(d.cat); } else choix.add(d.cat);
+    reglages.categories = { ...(reglages.categories || {}), [ui.type]: [...choix] };
+    changerReglage("categories", reglages.categories);
+    const page = $("piste")?.children[0];
+    if (page) { page.innerHTML = pageHTML(0); cascade(page); }
+    else rendreContenu();
+    return;
+  }
   if (d.aff !== undefined && affChoix && m) { const a = affChoix.liste[+d.aff]; if (a) appliquerAffiche(m, { image: a.image }); return; }
   if (d.moRes !== undefined && brouillon?.affiches) {
     const r = brouillon.affiches[+d.moRes];
@@ -1803,8 +1874,7 @@ document.addEventListener("keydown", e => {
   if (/INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
   // PC : flèches haut / bas = fiche précédente / suivante ; 0 à 5 = note
   if (estPC() && adresse.fiche && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-    const { principaux, bas } = contenuPage(ui.page);
-    const liste = [...principaux, ...bas];
+    const liste = contenuPage(ui.page).tous;
     const i = liste.findIndex(x => x.id === adresse.fiche);
     const n = liste[i + (e.key === "ArrowDown" ? 1 : -1)];
     if (n) { e.preventDefault(); location.replace("#" + adresseFiche(n.id)); setTimeout(() => document.querySelector(`[data-fiche="${n.id}"]`)?.scrollIntoView({ block: "nearest" }), 30); }
@@ -1826,7 +1896,7 @@ const COLONNES = [
   { header: "Affiche", key: "affiche", width: 7 }, { header: "Type", key: "type", width: 8 },
   { header: "Titre", key: "titre", width: 36 }, { header: "Année", key: "annee", width: 8 },
   { header: "Créateur", key: "createur", width: 24 }, { header: "Statut", key: "statut", width: 12 },
-  { header: "À revoir", key: "revoir", width: 9 }, { header: "Note", key: "note", width: 7 },
+  { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7 }, { header: "Note", key: "note", width: 7 },
   { header: "Coup de cœur", key: "coeur", width: 12 }, { header: "Vu", key: "vu", width: 26 },
   { header: "Commencé", key: "debut", width: 14 }, { header: "Support", key: "support", width: 14 },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
@@ -1844,7 +1914,7 @@ async function exporterExcel() {
     const liste = [...medias.values()].sort((a, b) => ordreType(a.type) - ordreType(b.type) || STATUTS.indexOf(a.statut) - STATUTS.indexOf(b.statut) || a.titre.localeCompare(b.titre, "fr"));
     const ws = ajouterFeuille(classeur, "Médias", COLONNES, liste.map(m => ({
       affiche: "", type: typeDe(m.type).un, titre: m.titre, annee: m.annee || "", createur: m.createur,
-      statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), note: m.note || "", coeur: ouiNon(m.coeur),
+      statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", coeur: ouiNon(m.coeur),
       vu: m.passages.map(p => texteDate(p)).join(" ; "), debut: texteDate(m.debut), support: m.support,
       genres: m.genres.join(", "), tags: m.tags.join(", "),
       saisons: m.saisons.actif ? `${m.saisons.vues.length}/${m.saisons.total}` : "", avis: m.avis,
@@ -1888,7 +1958,7 @@ async function importerExcel(champ) {
       const ajoute = Date.parse(l["Ajouté le"]);
       return normaliser(a ? a.id : nouvelId(), {
         type, titre: l["Titre"], annee: l["Année"], createur: l["Créateur"], statut: statutDuTexte(l["Statut"], type),
-        revoir: simplifier(l["À revoir"]) === "oui", note: l["Note"], coeur: simplifier(l["Coup de cœur"]) === "oui",
+        revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
         avis: l["Avis"], image: l["Image"], miniature: a?.miniature,

@@ -1,5 +1,12 @@
 # Médiathèque — journal des nouveautés
 
+## v0.5.0 — 2026-11-10
+- Jeux : « Infini ∞ » (déjà joué mais toujours bon pour une petite partie). Dans la fiche, le petit bouton à côté du statut propose au choix « À rejouer » ou « Infini ».
+- Page « À voir / À jouer / À lire » : catégories séparées (À voir, À revoir/rejouer, Infini, En réserve) avec des pastilles en haut pour en mélanger plusieurs. Les titres à revoir / infinis y apparaissent aussi.
+- (bêta) Menu Tags › Filtres : fiches de test, sans affiche, sans note, sans date, sans genre, sans tag, sans créateur, sans année, sans support.
+- « Voir aussi » est cherché dès l'ouverture de la fiche (le bouton ne fait qu'afficher), et ne montre plus que de vraies œuvres (Wikidata) : plus d'acteurs, de franchises ou de personnages.
+- Excel : colonne « Infini ».
+
 ## v0.4.0 — 2026-11-10
 - Jeux : recherche complétée par Wikidata (studio, genres, année de 1re sortie) et jaquette Steam en hauteur (600 × 900). « Voir aussi › Même studio » d'après Wikidata ; jaquette Steam en tête de « Choisir l'affiche ».
 - (bêta) Fiche › ⋯ › « Garder et réinitialiser » sur une fiche de test : on choisit le statut, tout le perso est effacé, la fiche est gardée pour de bon.
