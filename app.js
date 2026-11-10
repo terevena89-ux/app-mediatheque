@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.3.0";
+const VERSION = "v0.3.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -181,6 +181,7 @@ function normaliser(id, d) {
     genres: liste(d.genres),
     image: lienValide(d.image),
     miniature: typeof d.miniature === "string" && d.miniature.startsWith("data:image/") ? d.miniature : "",
+    mq: +d.mq || 0,   // qualité de la copie : 2 = nouvelle copie plus nette (v0.3.1)
     statut: STATUTS.includes(d.statut) ? d.statut : "avoir",
     revoir: !!d.revoir,
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
@@ -207,11 +208,18 @@ const dernierPassage = m => m.passages[m.passages.length - 1] || "";
 function teinte(t) { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 const degrade = t => { const h = teinte(t); return `linear-gradient(170deg,hsl(${h} 30% 56%),hsl(${(h + 30) % 360} 28% 36%))`; };
 const initiale = t => (String(t).replace(/^(le |la |les |l'|the )/i, "").match(/[\p{L}\p{N}]/u) || ["?"])[0].toUpperCase();
-// Affiche d'une fiche (copie gardée, sinon adresse web, sinon couleur + initiale)
-function vignette(m, classe = "") {
-  const src = m.miniature || m.image;
-  return `<span class="vg ${classe}" style="background:${degrade(m.titre)}"><b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}</span>`;
+// Affiche d'une fiche (copie gardée, sinon adresse web, sinon couleur + initiale).
+// hd = grande affiche (fiche) : on prend l'image du site, plus nette, et la copie gardée
+// sert de secours (hors ligne, ou si le site a changé l'adresse).
+function vignette(m, classe = "", hd = false) {
+  const src = hd && m.image ? m.image : (m.miniature || m.image);
+  const secours = hd && m.image && m.miniature && m.id ? `secoursImage(this,'${m.id}')` : "this.remove()";
+  return `<span class="vg ${classe}" style="background:${degrade(m.titre)}"><b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}</span>`;
 }
+window.secoursImage = (img, id) => {
+  const m = medias.get(id);
+  if (m?.miniature && img.src !== m.miniature) img.src = m.miniature; else img.remove();
+};
 
 // ---------- 3. Stockage ----------
 // Rangement dans Firestore :
@@ -266,6 +274,7 @@ function demarrerDemo() {
   chargeMedias = chargeDonnees = true;
   $("appli").hidden = false;
   router();
+  rafraichir();
 }
 let infoCompte = "";
 function demarrerFirebase() {
@@ -396,6 +405,28 @@ addEventListener("hashchange", router);
 function rafraichir() {
   if (!pret()) return;
   rendreTout({ doux: true });
+  if (!ameliorationLancee) { ameliorationLancee = true; setTimeout(ameliorerMiniatures, 6000); }
+}
+
+// Les copies d'affiches faites avant la v0.3.1 étaient plus petites (floues en grand) :
+// on les refait une par une, tranquillement en arrière-plan, quand le réseau est là.
+let ameliorationLancee = false;
+async function ameliorerMiniatures() {
+  const aRefaire = [...medias.values()].filter(m => m.image && m.mq < 2).map(m => m.id);
+  for (const id of aRefaire) {
+    if (!navigator.onLine) return;
+    const m = medias.get(id);
+    if (!m || !m.image || m.mq >= 2) continue;
+    const mini = await copierImage(m.image);
+    const actuelle = medias.get(id);
+    if (actuelle && actuelle.image === m.image) {
+      actuelle.mq = 2;                          // (même si le site refuse : on ne réessaie pas sans fin)
+      if (mini) actuelle.miniature = mini;
+      ecrireMedia(actuelle);
+    }
+    await new Promise(r => setTimeout(r, 400));   // sans surcharger le téléphone ni les sites
+  }
+  if (aRefaire.length) rafraichir();
 }
 
 // ---------- 5. Affichage ----------
@@ -657,7 +688,7 @@ function ficheHTML(m) {
       : `<input id="pas-an" type="number" inputmode="numeric" value="${new Date().getFullYear()}" min="1900" max="2100">`}
       <button class="btn pri" data-action="valider-passage">Ajouter</button></div></div>`;
   return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
-    <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff")}<span class="fi-crayon">${ic("crayon")}</span></button>
+    <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff", true)}<span class="fi-crayon">${ic("crayon")}</span></button>
       <div class="fi-tt"><h2>${echapper(m.titre)}</h2>
         <div class="fi-me">${[m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}${m.genres.length ? `<br>${echapper(m.genres.join(", "))}` : ""}</div></div>
       <div class="fi-btns"><button class="btn-icone" data-action="menu-fiche" aria-label="Plus d'actions">${ic("dots")}</button>
@@ -741,21 +772,23 @@ function ouvrirAffiche(m) {
     majGrilleAffiches(m, false);
   }).catch(() => majGrilleAffiches(m, false, true));
 }
+// Une image qui n'est pas en hauteur (logo, couverture vide…) est retirée de la grille
+window.verifierHauteur = img => { if (img.naturalHeight < img.naturalWidth * 1.15) img.closest(".aff")?.remove(); };
 function majGrilleAffiches(m, enCours, erreur) {
   if (!$("aff-grille")) return;
   const actuelle = (m.miniature || m.image) ? `<div class="aff"><span class="aff-v on">${vignette(m)}<span class="coche">${ic("ok")}</span></span><small>Actuelle</small></div>` : "";
   $("aff-grille").innerHTML = actuelle + affChoix.liste.map((a, i) => `<button class="aff" data-aff="${i}">
-      <span class="aff-v">${vignette({ titre: m.titre, image: a.image, miniature: "" })}</span><small>${echapper(a.legende)}</small></button>`).join("")
+      <span class="aff-v">${vignette({ titre: m.titre, image: a.image, miniature: "" }).replace(' loading="lazy"', "").replace("<img ", `<img onload="verifierHauteur(this)" `)}</span><small>${echapper(a.legende)}</small></button>`).join("")
     + (enCours ? `<div class="aff-attente">Recherche…</div>` : erreur ? `<div class="aff-attente">Recherche indisponible</div>`
       : !affChoix.liste.length ? `<div class="aff-attente">Aucune autre affiche trouvée</div>` : "");
 }
 function appliquerAffiche(m, { image = "", miniature = "" }) {
   const avant = { image: m.image, miniature: m.miniature };
-  m.image = image; m.miniature = miniature;
+  m.image = image; m.miniature = miniature; m.mq = 2;
   ecrireMedia(m);
   if (image && !miniature) copierImage(image).then(mini => {
     const x = medias.get(m.id);
-    if (mini && x && x.image === image) { x.miniature = mini; ecrireMedia(x); rafraichir(); }
+    if (mini && x && x.image === image) { x.miniature = mini; x.mq = 2; ecrireMedia(x); rafraichir(); }
   });
   retour();
   afficherToast("Affiche changée", () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); });
@@ -922,7 +955,7 @@ function creerFiche(infos, type, statut) {
   // Copie de l'affiche en arrière-plan (la fiche est déjà enregistrée)
   if (m.image) copierImage(m.image).then(mini => {
     const actuelle = medias.get(m.id);
-    if (mini && actuelle) { actuelle.miniature = mini; ecrireMedia(actuelle); rafraichir(); }
+    if (mini && actuelle) { actuelle.miniature = mini; actuelle.mq = 2; ecrireMedia(actuelle); rafraichir(); }
   });
   return m;
 }
@@ -972,12 +1005,12 @@ function enregistrerModif() {
   Object.assign(m, normaliser(m.id, {
     ...m, titre, type: $("mo-type").value, annee: $("mo-annee").value, createur: $("mo-createur").value,
     genres: $("mo-genres").value.split(","), image,
-    miniature: brouillon.miniatureChoisie ?? (changeImage ? "" : m.miniature)
+    miniature: brouillon.miniatureChoisie ?? (changeImage ? "" : m.miniature), mq: brouillon.miniatureChoisie ? 2 : m.mq
   }));
   ecrireMedia(m);
   vaCache.delete(m.id);   // titre ou créateur ont pu changer : on recherchera les suggestions
   if (changeImage && image && brouillon.miniatureChoisie === undefined) copierImage(image).then(mini => {
-    if (mini && medias.get(m.id)) { medias.get(m.id).miniature = mini; ecrireMedia(medias.get(m.id)); rafraichir(); }
+    if (mini && medias.get(m.id)) { medias.get(m.id).miniature = mini; medias.get(m.id).mq = 2; ecrireMedia(medias.get(m.id)); rafraichir(); }
   });
   if (m.type !== ui.type) { ui.type = m.type; changerReglage("type", m.type); }
   location.replace("#" + adresseFiche(m.id));
@@ -1808,7 +1841,7 @@ async function copierMiniaturesManquantes(liste) {
   for (const m of liste) {
     const mini = await copierImage(m.image);
     const actuelle = medias.get(m.id);
-    if (mini && actuelle) { actuelle.miniature = mini; ecrireMedia(actuelle); }
+    if (mini && actuelle) { actuelle.miniature = mini; actuelle.mq = 2; ecrireMedia(actuelle); }
   }
   rafraichir();
 }

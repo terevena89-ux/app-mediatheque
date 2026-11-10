@@ -62,7 +62,7 @@ async function series(q, signal) {
     annee: annee(s.premiered),
     createur: s.network?.name || s.webChannel?.name || "",
     genres: trouverGenres((s.genres || []).join(" ")),
-    image: (s.image?.medium || "").replace(/^http:/, "https:"),   // affiches de TVmaze : toujours en hauteur
+    image: (s.image?.original || s.image?.medium || "").replace(/^http:/, "https:"),   // affiches de TVmaze : toujours en hauteur
     info: [annee(s.premiered), s.network?.name || s.webChannel?.name].filter(Boolean).join(" · ")
   }));
 }
@@ -73,7 +73,7 @@ const versLivre = l => ({
   annee: l.first_publish_year || null,
   createur: (l.author_name || []).slice(0, 2).join(", "),
   genres: trouverGenres((l.subject || []).slice(0, 15).join(" ")),
-  image: l.cover_i ? `https://covers.openlibrary.org/b/id/${l.cover_i}-M.jpg` : "",   // couvertures : en hauteur
+  image: l.cover_i ? `https://covers.openlibrary.org/b/id/${l.cover_i}-L.jpg` : "",   // couvertures : en hauteur
   info: [l.first_publish_year, (l.author_name || [])[0]].filter(Boolean).join(" · ")
 });
 const CHAMPS_OL = "title,author_name,first_publish_year,cover_i,subject";
@@ -93,7 +93,7 @@ const PAS_UNE_OEUVRE = /personnage|lieu fictif|famille fictive|planète|organisa
 async function pagesWiki(recherche, signal, limite = 10) {
   const fr = await lireJSON("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({
     action: "query", format: "json", origin: "*", generator: "search", gsrsearch: recherche, gsrlimit: String(limite),
-    prop: "pageimages|description|langlinks", piprop: "thumbnail", pithumbsize: "300", pilicense: "any",
+    prop: "pageimages|description|langlinks", piprop: "thumbnail", pithumbsize: "500", pilicense: "any",
     lllang: "en", lllimit: "max", redirects: "1"
   }), signal);
   return Object.values(fr.query?.pages || {}).sort((a, b) => a.index - b.index);
@@ -116,7 +116,7 @@ async function versResultats(liste, signal) {
     try {
       const en = await lireJSON("https://en.wikipedia.org/w/api.php?" + new URLSearchParams({
         action: "query", format: "json", origin: "*", titles: anglais.slice(0, 40).join("|"), prop: "pageimages",
-        piprop: "thumbnail", pithumbsize: "300", pilicense: "any", redirects: "1"
+        piprop: "thumbnail", pithumbsize: "500", pilicense: "any", redirects: "1"
       }), signal);
       // Les titres ont pu être « normalisés » ou redirigés : on retrouve le titre d'origine
       const vers = {};
@@ -166,16 +166,16 @@ export async function chercherAffiches(type, titre, signal) {
   if (type === "serie") {
     const shows = (await lireJSON(`https://api.tvmaze.com/search/shows?q=${q}`, signal)).map(r => r.show).filter(s => memeTitre(s.name, titre)).slice(0, 2);
     for (const s of shows) {
-      ajoute(https(s.image?.medium));
+      ajoute(https(s.image?.original || s.image?.medium));
       try {
         const imgs = await lireJSON(`https://api.tvmaze.com/shows/${s.id}/images`, signal);
-        imgs.filter(i => i.type === "poster").forEach(i => ajoute(https(i.resolutions?.medium?.url || i.resolutions?.original?.url)));
+        imgs.filter(i => i.type === "poster").forEach(i => ajoute(https(i.resolutions?.original?.url || i.resolutions?.medium?.url)));
       } catch (e) { /* pas d'autres posters */ }
     }
   } else if (type === "livre") {
     const docs = ((await lireJSON(`https://openlibrary.org/search.json?title=${q}&fields=key,title,cover_i&limit=5`, signal)).docs || [])
       .filter(d => memeTitre(d.title, titre)).slice(0, 2);
-    const couverture = c => `https://covers.openlibrary.org/b/id/${c}-M.jpg`;
+    const couverture = c => `https://covers.openlibrary.org/b/id/${c}-L.jpg`;
     docs.forEach(d => d.cover_i && ajoute(couverture(d.cover_i)));
     for (const d of docs) {
       try {
@@ -184,19 +184,37 @@ export async function chercherAffiches(type, titre, signal) {
       } catch (e) { /* pas d'éditions */ }
     }
   } else {
+    // Films et jeux : chaque pays a souvent sa propre affiche (sortie en salle locale).
+    // On part de la page anglaise, puis on regarde l'image de la même page dans d'autres
+    // Wikipédia qui gardent les affiches (russe, ukrainienne, coréenne, hébraïque…).
     const pages = duBonType(await pagesWiki(`${titre} ${MOT_CLE[type]}`, signal, 6), type).filter(p => memeTitre(sansParentheses(p.title), titre));
-    pages.forEach(p => { if (enHauteur(p.thumbnail)) ajoute(p.thumbnail.source); });
-    const anglais = pages.map(p => p.langlinks?.[0]?.["*"]).filter(Boolean);
-    if (anglais.length) {
-      const en = await lireJSON("https://en.wikipedia.org/w/api.php?" + new URLSearchParams({
-        action: "query", format: "json", origin: "*", titles: anglais.join("|"), prop: "pageimages",
-        piprop: "thumbnail", pithumbsize: "300", pilicense: "any", redirects: "1"
-      }), signal);
-      Object.values(en.query?.pages || {}).forEach(p => { if (enHauteur(p.thumbnail)) urls.unshift(p.thumbnail.source); });
+    const fichiers = new Set();   // même fichier d'image = même affiche : on ne la garde qu'une fois
+    const nomFichier = u => decodeURIComponent(u.split("?")[0].split("/").pop()).replace(/^\d+px-/, "").toLowerCase();
+    const garder = th => {
+      if (!enHauteur(th)) return;
+      const f = nomFichier(th.source);
+      if (fichiers.has(f)) return;
+      fichiers.add(f); ajoute(th.source);
+    };
+    const anglais = pages.map(p => p.langlinks?.[0]?.["*"]).filter(Boolean)[0];
+    if (anglais) {
+      const en = await lireJSON(wikiAPI("en", { titles: anglais, prop: "pageimages|langlinks", lllimit: "max" }), signal);
+      const p = Object.values(en.query?.pages || {})[0];
+      if (p?.thumbnail) garder(p.thumbnail);
+      const liens = (p?.langlinks || []).filter(l => LANGUES_AFFICHES.includes(l.lang));
+      const autres = await Promise.all(liens.map(l => lireJSON(wikiAPI(l.lang, { titles: l["*"], prop: "pageimages" }), signal)
+        .then(j => Object.values(j.query?.pages || {})[0]?.thumbnail).catch(() => null)));
+      autres.forEach(th => th && garder(th));
     }
+    pages.forEach(p => p.thumbnail && garder(p.thumbnail));
   }
   return [...new Set(urls)].slice(0, 24);
 }
+// Wikipédia qui gardent souvent l'affiche de leur pays
+const LANGUES_AFFICHES = ["ru", "uk", "ko", "he", "zh", "vi", "pt", "hu", "sr", "el", "th", "ka", "fa", "ar", "tr", "id", "ca", "hy", "it", "pl"];
+const wikiAPI = (langue, params) => `https://${langue}.wikipedia.org/w/api.php?` + new URLSearchParams({
+  action: "query", format: "json", origin: "*", redirects: "1", piprop: "thumbnail", pithumbsize: "500", pilicense: "any", ...params
+});
 
 // Séries sans affiche (Wikipédia montre souvent un titre en largeur) : on demande l'affiche à TVmaze
 async function completerSeries(liste, type, signal) {
@@ -204,7 +222,7 @@ async function completerSeries(liste, type, signal) {
   await Promise.all(liste.filter(r => !r.image).map(async r => {
     try {
       const s = await lireJSON(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(r.titre)}`, signal);
-      if (s?.image?.medium) r.image = s.image.medium.replace(/^http:/, "https:");
+      if (s?.image) r.image = (s.image.original || s.image.medium).replace(/^http:/, "https:");
     } catch (e) { /* pas trouvée : sans affiche */ }
   }));
   return liste;
@@ -253,7 +271,7 @@ export async function voirAussi(m, signal) {
 // reste même si le site d'origine change son adresse un jour.
 // Certains sites refusent qu'on copie leurs images : on renvoie alors "" et la fiche
 // garde seulement l'adresse.
-const LARGEUR = 160, HAUTEUR = 240;
+const LARGEUR = 240, HAUTEUR = 360;   // un peu plus grand qu avant : plus net (~20 Ko)
 function versJPEG(img) {
   const r = Math.min(1, LARGEUR / img.naturalWidth, HAUTEUR / img.naturalHeight);
   const c = document.createElement("canvas");
@@ -263,7 +281,7 @@ function versJPEG(img) {
   // Fond blanc d'abord : les logos transparents (PNG) deviendraient noirs en JPEG
   g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
   g.drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL("image/jpeg", 0.72);   // lève une erreur si le site refuse la copie
+  return c.toDataURL("image/jpeg", 0.8);   // lève une erreur si le site refuse la copie
 }
 export function copierImage(url) {
   return new Promise(ok => {

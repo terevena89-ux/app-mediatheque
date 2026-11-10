@@ -1,5 +1,10 @@
 # Médiathèque — journal des nouveautés
 
+## v0.3.1 — 2026-11-10
+- Choisir l'affiche : films et jeux proposent maintenant les affiches des autres pays (Wikipédia russe, coréenne, ukrainienne…), ex. 9 pour Midsommar, 12 pour Oppenheimer. Images en largeur retirées de la grille.
+- Affiches plus nettes : la fiche affiche l'image du site en pleine qualité (la copie gardée sert de secours hors ligne), copies gardées plus grandes (240 × 360), images plus grandes demandées aux sites.
+- Les anciennes copies sont refaites en meilleure qualité, tranquillement en arrière-plan.
+
 ## v0.3.0 — 2026-11-10
 - Ajouter : 4 petites icônes de statut à côté de chaque résultat (À voir, En cours, Vu, Réserve). Un titre déjà dans la médiathèque montre son statut (plus de doublons).
 - Fiche : section « Voir aussi » — titres proches (Wikipédia) et même réalisateur / studio / auteur / chaîne, ajout direct avec le statut.
