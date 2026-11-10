@@ -9,8 +9,9 @@
 // Chaque « événement » = un passage (une fois où j'ai vu / joué / lu le titre) :
 //   { id, titre, type, mois, precision, debut, note, coeur, fois, vignette }
 //   mois      : numéro du mois depuis l'an 0 (année × 12 + mois de 0 à 11)
-//   precision : "jour" | "mois" | "saison" | "annee"
-//   debut     : numéro du mois de début (ou null)
+//   precision : "jour" | "mois" | "annee" (pour une période : précision de la fin)
+//   debut     : numéro du mois de début (ou null) — pour une période « de … à … »
+//   libelle   : texte de la période sans l'année (« oct. → déc. »), sinon ""
 //   fois      : 1 pour la 1re fois, 2 pour « revu »…
 //   vignette  : petit bout de HTML de l'affiche (fourni par app.js)
 // =========================================================
@@ -21,10 +22,10 @@ const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août"
 const echapper = t => String(t ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const etoiles = n => n ? `<span class="etoiles">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>` : "";
 
-// Petit texte de date d'un événement : « 12 mars », « mars », « été », « dans l'année »
+// Petit texte de date d'un événement : « 12 mars », « mars », « oct. → déc. », « dans l'année »
 function quand(e) {
+  if (e.libelle) return e.libelle;
   if (e.precision === "annee") return "dans l'année";
-  if (e.precision === "saison") return e.saison || "";
   if (e.precision === "jour") return `${e.jour} ${MOIS[e.mois % 12]}`;
   return MOIS[e.mois % 12];
 }
@@ -85,13 +86,13 @@ function horizontale(evs, larg) {
 
 // ---------- 3. Mur par mois ----------
 function mur(evs) {
-  // Groupes : un par mois (ou par saison / « dans l'année » quand la date est floue)
+  // Groupes : un par mois de fin (ou « dans l'année » quand la date est floue)
   const groupes = [];
   evs.forEach(e => {
     const a = Math.floor(e.mois / 12);
-    const cle = e.precision === "annee" ? `${a}-annee` : e.precision === "saison" ? `${a}-${e.saison}` : `${e.mois}`;
+    const cle = e.precision === "annee" ? `${a}-annee` : `${e.mois}`;
     let g = groupes.find(x => x.cle === cle);
-    if (!g) groupes.push(g = { cle, an: a, nom: e.precision === "annee" ? "année" : e.precision === "saison" ? e.saison : MOIS[e.mois % 12], evs: [] });
+    if (!g) groupes.push(g = { cle, an: a, nom: e.precision === "annee" ? "année" : MOIS[e.mois % 12], evs: [] });
     g.evs.push(e);
   });
   let an = null, h = "";

@@ -30,7 +30,7 @@ import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.6.0";
+const VERSION = "v0.7.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -120,55 +120,98 @@ function vibrer() {
   try { navigator.vibrate && navigator.vibrate(8); } catch (e) { /* pas de vibreur */ }
 }
 
-// ---------- Dates souples ----------
-// Une date de passage peut être plus ou moins précise :
-//   "2024-03-12" (jour), "2024-03" (mois), "2024-ete" (saison), "2024" (année)
+// ---------- Dates souples et périodes ----------
+// Un « bout » de date peut être plus ou moins précis :
+//   "2024-03-12" (jour), "2024-03" (mois), "2024" (année)
+// Un passage = un bout seul, ou une période « de … à … » écrite avec une barre :
+//   "2024-10/2024-12" (d'octobre à décembre), "2019/2021-03", et "2025-03/" = commencé, pas fini (en cours)
+// Les saisons ne sont qu'un raccourci pour remplir une période (hiver 2025 = déc. 2024 → févr. 2025).
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const MOIS_COURTS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
-const SAISONS = { hiver: { nom: "hiver", mois: 0 }, printemps: { nom: "printemps", mois: 3 }, ete: { nom: "été", mois: 6 }, automne: { nom: "automne", mois: 9 } };
-function lireDate(s) {
+const SAISONS = { hiver: { nom: "Hiver", de: -1, a: 1 }, printemps: { nom: "Printemps", de: 2, a: 4 }, ete: { nom: "Été", de: 5, a: 7 }, automne: { nom: "Automne", de: 8, a: 10 } };
+// Période d'une saison (mois de 0 à 11 ; -1 = décembre de l'année d'avant)
+function periodeSaison(cle, an) {
+  const s = SAISONS[cle], bout = m => m < 0 ? `${an - 1}-12` : `${an}-${deuxChiffres(m + 1)}`;
+  return { de: bout(s.de), a: bout(s.a) };
+}
+const moisNum = () => { const d = new Date(); return d.getFullYear() * 12 + d.getMonth(); };
+function lireBout(s) {
   let m;
   if ((m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s))) return { precision: "jour", an: +m[1], mois: (+m[1]) * 12 + (+m[2] - 1), jour: +m[3] };
-  if ((m = /^(\d{4})-(\d{2})$/.exec(s))) return { precision: "mois", an: +m[1], mois: (+m[1]) * 12 + (+m[2] - 1) };
-  if ((m = /^(\d{4})-(hiver|printemps|ete|automne)$/.exec(s))) return { precision: "saison", an: +m[1], mois: (+m[1]) * 12 + SAISONS[m[2]].mois, saison: SAISONS[m[2]].nom };
+  if ((m = /^(\d{4})-(\d{2})$/.exec(s)) && +m[2] >= 1 && +m[2] <= 12) return { precision: "mois", an: +m[1], mois: (+m[1]) * 12 + (+m[2] - 1) };
   if ((m = /^(\d{4})$/.exec(s))) return { precision: "annee", an: +m[1], mois: (+m[1]) * 12 + 6 };
   return null;
 }
+// Lit un passage. Pour une période, les infos (mois, jour, précision) sont celles de la FIN
+// (c'est là qu'on l'a fini) ; « debut » = numéro du mois de début ; « ouvert » = pas encore fini.
+function lireDate(s) {
+  s = String(s || "");
+  if (!s.includes("/")) return lireBout(s);
+  const [x, y] = s.split("/"), de = lireBout(x), fin = y ? lireBout(y) : null;
+  if (!de || (y && !fin)) return null;
+  if (!fin) return { ...de, mois: Math.max(moisNum(), de.mois), jour: 0, periode: true, ouvert: true, de, debut: de.mois };
+  return { ...fin, periode: true, de, fin, debut: de.mois };
+}
 const dateValide = s => !!lireDate(String(s || "").trim());
+const estOuvert = p => !!lireDate(p)?.ouvert;
 // Valeur pour trier les dates (plus grand = plus récent)
 const valeurDate = s => { const d = lireDate(s); return d ? d.mois + (d.jour ? d.jour / 32 : .5) : -1; };
-// « 12 mars 2024 », « mars 2024 », « été 2024 », « 2024 »
+const valeurBout = s => { const d = lireBout(s); return d ? d.mois + (d.jour ? d.jour / 32 : d.precision === "annee" ? 0 : .5) : -1; };
+// « 12 mars 2024 », « mars 2024 », « 2024 »
+function texteBout(d, court, avecAn = true) {
+  const mois = (court ? MOIS_COURTS : NOMS_MOIS)[d.mois % 12], an = avecAn ? ` ${d.an}` : "";
+  if (d.precision === "jour") return `${d.jour} ${mois}${an}`;
+  if (d.precision === "mois") return `${mois}${an}`;
+  return `${d.an}`;
+}
+// Passage en texte : « mars 2024 », « oct. → déc. 2023 », « déc. 2024 → févr. 2025 », « depuis mars 2025 »
 function texteDate(s, court = false) {
   const d = lireDate(s);
   if (!d) return "";
-  const mois = (court ? MOIS_COURTS : NOMS_MOIS)[d.mois % 12];
-  if (d.precision === "jour") return `${d.jour} ${mois} ${d.an}`;
-  if (d.precision === "mois") return `${mois} ${d.an}`;
-  if (d.precision === "saison") return `${d.saison} ${d.an}`;
-  return `${d.an}`;
+  if (!d.periode) return texteBout(d, court);
+  if (d.ouvert) return `depuis ${texteBout(d.de, court)}`;
+  // Même année des deux côtés : l'année n'est écrite qu'une fois, à la fin
+  const memeAn = d.de.an === d.fin.an && d.de.precision !== "annee" && d.fin.precision !== "annee";
+  return `${texteBout(d.de, true, !memeAn)} → ${texteBout(d.fin, true)}`;
 }
-// L'inverse (pour l'import Excel) : « mars 2024 » → "2024-03"
+// Anciennes dates « 2024-ete » (avant la v0.7) → période de la saison
+function migrerDate(s) {
+  const m = /^(\d{4})-(hiver|printemps|ete|automne)$/.exec(String(s || "").trim());
+  if (!m) return String(s || "").trim();
+  const p = periodeSaison(m[2], +m[1]);
+  return `${p.de}/${p.a}`;
+}
+// L'inverse (pour l'import Excel) : « mars 2024 » → "2024-03", « oct. → déc. 2023 » → "2023-10/2023-12"
+function boutDuTexte(s, anSecours) {
+  const mois = mot => NOMS_MOIS.findIndex(x => simplifier(x).startsWith(mot));
+  if (lireBout(s)) return s;
+  let m, i;
+  if ((m = /^(\d{1,2}) ([a-z]+)(?: (\d{4}))?$/.exec(s)) && (i = mois(m[2])) >= 0 && (m[3] || anSecours)) return `${m[3] || anSecours}-${deuxChiffres(i + 1)}-${deuxChiffres(+m[1])}`;
+  if ((m = /^([a-z]+)(?: (\d{4}))?$/.exec(s)) && (i = mois(m[1])) >= 0 && (m[2] || anSecours)) return `${m[2] || anSecours}-${deuxChiffres(i + 1)}`;
+  return "";
+}
 function dateDuTexte(t) {
-  const s = simplifier(t).replace(/\./g, "");
+  const s = simplifier(t).replace(/\./g, "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
   if (dateValide(s)) return s;
   let m;
-  if ((m = /^(\d{1,2}) ([a-z]+) (\d{4})$/.exec(s))) { const i = NOMS_MOIS.findIndex(x => simplifier(x).startsWith(m[2].slice(0, 3))); if (i >= 0) return `${m[3]}-${deuxChiffres(i + 1)}-${deuxChiffres(+m[1])}`; }
-  if ((m = /^([a-z]+) (\d{4})$/.exec(s))) {
-    const saison = { hiver: "hiver", printemps: "printemps", ete: "ete", automne: "automne" }[m[1]];
-    if (saison) return `${m[2]}-${saison}`;
-    const i = NOMS_MOIS.findIndex(x => simplifier(x).startsWith(m[1].slice(0, 3)));
-    if (i >= 0) return `${m[2]}-${deuxChiffres(i + 1)}`;
+  if ((m = /^(hiver|printemps|ete|automne) (\d{4})$/.exec(s))) return migrerDate(`${m[2]}-${m[1]}`);
+  if ((m = /^depuis (.+)$/.exec(s))) { const b = boutDuTexte(m[1]); return b ? `${b}/` : ""; }
+  if (/→|->/.test(s)) {
+    const [x, y] = s.split(/ ?(?:→|->) ?/);
+    const fin = boutDuTexte(y), de = boutDuTexte(x, lireBout(fin)?.an);
+    return de && fin ? `${de}/${fin}` : "";
   }
-  return "";
+  return boutDuTexte(s);
 }
 
 // ---------- 2. Les données ----------
 // Une fiche = { id, type, titre, annee, createur, genres[], image, miniature, statut, revoir, note, coeur,
-//               passages[], debut, support, tags[], avis, saisons { actif, total, vues[] }, test, cree }
+//               passages[], support, tags[], avis, saisons { actif, total, vues[] }, test, cree }
 //   image     : adresse de l'affiche sur le web
 //   miniature : petite copie de l'affiche (~10 Ko) gardée dans la fiche
-//   passages  : dates où je l'ai vu / joué / lu (plusieurs si revu)
-//   debut     : quand je l'ai commencé (posé tout seul en passant « En cours »)
+//   passages  : dates ou périodes où je l'ai vu / joué / lu (plusieurs si revu) ;
+//               « 2025-03/ » = commencé en mars, pas encore fini (posé tout seul en passant « En cours »)
 let medias = new Map();
 let donnees = { supports: [...SUPPORTS_DEPART], idees: "" };
 
@@ -190,8 +233,7 @@ function normaliser(id, d) {
     infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
     coeur: !!d.coeur,
-    passages: liste(d.passages).filter(dateValide).sort((a, b) => valeurDate(a) - valeurDate(b)),
-    debut: dateValide(d.debut) ? d.debut : "",
+    passages: fusionnerDebut(liste(d.passages).map(migrerDate).filter(dateValide), lireBout(String(d.debut || "")) ? d.debut : "", d.statut),
     support: String(d.support || "").trim(),
     tags: liste(d.tags),
     avis: String(d.avis || ""),
@@ -210,6 +252,29 @@ function normaliserDonnees(d) {
     supportsJeux: true,
     idees: typeof d.idees === "string" ? d.idees : ""   // Réglages › Notes
   };
+}
+const trierPassages = l => [...new Set(l)].sort((a, b) => valeurDate(a) - valeurDate(b));
+// Avant la v0.7, « Commencé » était une date à part (champ debut). Elle devient le début d'une période :
+//   en cours → « depuis [début] … » ; vu → la dernière date devient « [début] → [date] ».
+function fusionnerDebut(passages, debut, statut) {
+  passages = trierPassages(passages);
+  if (!debut) return passages;
+  if (statut === "encours") return passages.some(estOuvert) ? passages : trierPassages([...passages, `${debut}/`]);
+  const k = passages.length - 1, der = passages[k];
+  if (der && !der.includes("/") && valeurBout(debut) < valeurBout(der)) passages[k] = `${debut}/${der}`;
+  return trierPassages(passages);
+}
+// Changement de statut : « En cours » ouvre une période (depuis ce mois-ci), « Vu » / « Abandonné » la ferme
+// (au mois actuel), « À voir » / « En réserve » l'enlève.
+function periodeSelonStatut(x, statut) {
+  const mois = moisActuel();
+  if (statut === "encours") { if (!x.passages.some(estOuvert)) x.passages = trierPassages([...x.passages, `${mois}/`]); return; }
+  if (statut === "avoir" || statut === "reserve") { x.passages = x.passages.filter(p => !estOuvert(p)); return; }
+  const ouvert = x.passages.find(estOuvert);
+  if (ouvert) {
+    const de = ouvert.slice(0, -1);
+    x.passages = trierPassages(x.passages.map(p => p === ouvert ? (de.startsWith(mois) ? de : `${de}/${mois}`) : p));
+  }
 }
 const dernierPassage = m => m.passages[m.passages.length - 1] || "";
 
@@ -391,7 +456,7 @@ let ui = {
   type: TYPES.some(t => t.id === reglages.type) ? reglages.type : "film",
   page: [0, 1, 2].includes(reglages.page) ? reglages.page : 0,
   recherche: "", filtres: new Set(), friseTypes: new Set(),
-  ajoutPassage: false, precision: "mois", vaOnglet: "proches"
+  ajoutPassage: false, per: null, vaOnglet: "proches"
 };
 let adresse = lireAdresse();
 let ficheAffichee = null;   // id de la fiche ouverte (pour ne l'animer qu'à l'ouverture)
@@ -400,7 +465,7 @@ function router() {
   if (!pret()) return;
   const avant = adresse;
   adresse = lireAdresse();
-  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
+  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.per = null; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
   // Fenêtre « Choisir l'affiche » (2e couche, au-dessus de la fiche)
   const m = adresse.fiche && medias.get(adresse.fiche);
   if (adresse.affiche && m && affChoix?.id !== m.id) ouvrirAffiche(m);
@@ -689,11 +754,9 @@ function evenementsFrise() {
     if (ui.friseTypes.size && !ui.friseTypes.has(m.type)) return;
     m.passages.forEach((p, k) => {
       const d = lireDate(p);
-      if (!d) return;
-      // Le début n'a de sens que pour le dernier passage
-      const debut = k === m.passages.length - 1 && m.debut ? lireDate(m.debut)?.mois ?? null : null;
-      evs.push({ id: m.id, titre: m.titre, type: m.type, mois: d.mois, precision: d.precision, jour: d.jour, saison: d.saison,
-        debut, note: m.note, coeur: m.coeur, fois: k + 1, vignette: vignette(m, "fv"), tri: valeurDate(p) });
+      if (!d || d.ouvert) return;   // pas encore fini : pas dans la frise
+      evs.push({ id: m.id, titre: m.titre, type: m.type, mois: d.mois, precision: d.precision, jour: d.jour,
+        libelle: d.periode ? texteDate(p, true).replace(/ \d{4}$/, "") : "", debut: d.periode ? d.debut : null, note: m.note, coeur: m.coeur, fois: k + 1, vignette: vignette(m, "fv"), tri: valeurDate(p) });
     });
   });
   return evs.sort((a, b) => b.tri - a.tri);
@@ -735,14 +798,8 @@ function ficheHTML(m) {
       const vue = s.vues.includes(n), enCours = !vue && n === Math.max(0, ...s.vues) + 1 && m.statut === "encours";
       return `<button class="sa ${vue ? "vue" : ""} ${enCours ? "encours" : ""}" data-saison="${n}">S${n}${vue ? ic("ok") : ""}</button>`;
     }).join("")}<button class="sa plus" data-action="saison-plus" aria-label="Ajouter une saison">+</button>${s.total ? `<button class="sa moins" data-action="saison-moins" aria-label="Enlever une saison">−</button>` : ""}</span></div>` : ""}`;
-  const passages = m.passages.map((p, k) => `<button class="chip" data-passage="${k}">${echapper(texteDate(p))}</button>`).join("");
-  const formPassage = !ui.ajoutPassage ? "" : `<div class="pas-form">
-    <div class="seg">${[["jour", "Jour"], ["mois", "Mois"], ["saison", "Saison"], ["annee", "Année"]].map(([p, n]) => `<button data-precision="${p}" aria-pressed="${ui.precision === p}">${n}</button>`).join("")}</div>
-    <div class="pas-champs">${ui.precision === "jour" ? `<input id="pas-jour" type="date" value="${jourActuel()}" max="${jourActuel()}">`
-      : ui.precision === "mois" ? `<input id="pas-mois" type="month" value="${moisActuel()}" max="${moisActuel()}">`
-      : ui.precision === "saison" ? `<select id="pas-saison">${Object.entries(SAISONS).map(([k, v]) => `<option value="${k}" ${Math.floor(new Date().getMonth() / 3) === Math.floor(v.mois / 3) ? "selected" : ""}>${v.nom}</option>`).join("")}</select><input id="pas-an" type="number" inputmode="numeric" value="${new Date().getFullYear()}" min="1900" max="2100">`
-      : `<input id="pas-an" type="number" inputmode="numeric" value="${new Date().getFullYear()}" min="1900" max="2100">`}
-      <button class="btn pri" data-action="valider-passage">Ajouter</button></div></div>`;
+  const passages = m.passages.map((p, k) => `<button class="chip ${estOuvert(p) ? "ouvert" : ""}" data-passage="${k}">${echapper(texteDate(p))}${estOuvert(p) ? " …" : ""}</button>`).join("");
+  const formPassage = !ui.ajoutPassage || !ui.per ? "" : periodeHTML(ui.per, "fiche", ui.per.remplace != null ? "OK" : "Ajouter");
   return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
     <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff", true)}<span class="fi-crayon">${ic("crayon")}</span></button>
       <div class="fi-tt"><h2>${echapper(m.titre)}</h2>
@@ -766,7 +823,6 @@ function ficheHTML(m) {
       ${saisons}
       ${pasEncoreVu ? "" : `<div class="bloc"><span class="k">${mots.passage}</span><span class="v passages">${passages}<button class="chip plus" data-action="ajout-passage">+ Ajouter</button></span></div>
       ${formPassage}`}
-      ${m.debut && !pasEncoreVu ? `<div class="bloc"><span class="k">Commencé</span><span class="v"><button class="chip" data-action="debut">${echapper(texteDate(m.debut))}</button></span></div>` : ""}
       ${m.type !== "jeu" ? "" : `<div class="bloc"><span class="k">Support</span><span class="v"><select data-champ="support" aria-label="Support">
         <option value="">—</option>${supports.map(x => `<option ${x === m.support ? "selected" : ""}>${echapper(x)}</option>`).join("")}<option value="__autre">Ajouter un support…</option></select></span></div>`}
       <div class="bloc"><span class="k">Tags</span><span class="v tags">${m.tags.map(t => `<button class="chip tag" data-suppr-tag="${echapper(t)}" title="Enlever">${echapper(t)}<span class="x">×</span></button>`).join("")}
@@ -778,6 +834,116 @@ function ficheHTML(m) {
     </div>`;
 }
 const ICONE_STATUT = { avoir: "savoir", encours: "sencours", fini: "ok", reserve: "boite", abandon: "x" };
+
+// --- Saisir une date ou une période « De … À … » (fiche et mode Trier) ---
+// Un « état » garde ce qui est en train d'être saisi (pour redessiner sans rien perdre) :
+//   { de: { p: précision, v: valeur }, a: { p, v }, grille: grille de mois ouverte ?, an: année de la grille,
+//     clic: 0 = le prochain mois touché est le début, 1 = c'est la fin ; ouvert : période « en cours » ;
+//     remplace : n° du passage modifié (sinon on en ajoute un) }
+// « À » vide = une date seule.
+function etatPeriode(passage = "", remplace = null) {
+  const [x, y = ""] = passage ? passage.split("/") : [moisActuel()];
+  const bout = v => ({ p: lireBout(v)?.precision || "mois", v });
+  return { de: bout(x), a: bout(y), grille: false, an: +(y || x).slice(0, 4) || new Date().getFullYear(), clic: 0,
+    ouvert: passage.endsWith("/"), remplace };
+}
+// Change la précision d'un bout en gardant ce qu'on peut de la valeur (2024-03-12 → 2024-03 → 2024)
+function convertirBout(v, p, fin) {
+  if (!v) return "";
+  const an = v.slice(0, 4), mo = v.slice(5, 7) || (fin ? "12" : "01"), jo = v.slice(8, 10) || "01";
+  return p === "annee" ? an : p === "mois" ? `${an}-${mo}` : `${an}-${mo}-${jo}`;
+}
+// Le passage saisi (ou "" si la saisie est incomplète)
+function lirePeriode(e) {
+  let de = e.de.v.trim(), a = e.a.v.trim();
+  if (!lireBout(de) || (a && !lireBout(a))) return "";
+  if (!a) return e.ouvert ? `${de}/` : de;
+  if (a === de) return de;
+  if (valeurBout(a) < valeurBout(de)) [de, a] = [a, de];
+  return `${de}/${a}`;
+}
+function periodeHTML(e, ou, texteOK) {
+  const vMois = b => b.v && b.p !== "annee" ? lireBout(b.v)?.mois : null;
+  const mDe = vMois(e.de), mA = vMois(e.a), maintenant = moisNum();
+  const saisonActive = k => [0, 1].some(i => { const an = +e.de.v.slice(0, 4) + i, s = periodeSaison(k, an); return s.de === e.de.v && s.a === e.a.v; });
+  const champ = c => {
+    const b = e[c], attr = `data-per-champ="${c}" data-ou="${ou}" aria-label="${c === "de" ? "Début" : "Fin"}"`;
+    if (b.p === "jour") return `<input type="date" ${attr} value="${echapper(b.v)}" max="${jourActuel()}">`;
+    if (b.p === "mois") return `<input type="month" ${attr} value="${echapper(b.v)}" max="${moisActuel()}">`;
+    return `<input type="number" inputmode="numeric" ${attr} value="${echapper(b.v)}" min="1900" max="2100" placeholder="${c === "a" ? (e.ouvert ? "en cours" : "—") : "année"}">`;
+  };
+  const ligne = c => `<div class="per-ligne"><span class="per-t">${c === "de" ? "De" : "À"}</span>
+    <div class="seg petit">${[["jour", "Jour"], ["mois", "Mois"], ["annee", "An"]].map(([p, n]) => `<button data-per-prec="${p}" data-per-bout="${c}" data-ou="${ou}" aria-pressed="${e[c].p === p}">${n}</button>`).join("")}</div>
+    ${champ(c)}</div>`;
+  const grille = !e.grille ? "" : `<div class="per-grille">
+    <div class="per-an"><button data-per="an-" data-ou="${ou}" aria-label="Année d'avant">${ic("retour", "s")}</button><b>${e.an}</b><button data-per="an+" data-ou="${ou}" aria-label="Année d'après">${ic("droite", "s")}</button></div>
+    <div class="per-mois">${MOIS_COURTS.map((n, i) => {
+      const num = e.an * 12 + i, bout = num === mDe || num === mA, dans = mDe != null && mA != null && num > Math.min(mDe, mA) && num < Math.max(mDe, mA);
+      return `<button data-per-mois="${e.an}-${deuxChiffres(i + 1)}" data-ou="${ou}" class="${bout ? "bout" : dans ? "dans" : ""} ${num > maintenant ? "futur" : ""}">${n}</button>`;
+    }).join("")}</div></div>`;
+  return `<div class="per" id="per-${ou}">
+    <div class="per-saisons"><span class="per-mini">Saison</span>${Object.entries(SAISONS).map(([k, s]) => `<button class="per-sai ${saisonActive(k) ? "on" : ""}" data-per-saison="${k}" data-ou="${ou}">${s.nom}</button>`).join("")}</div>
+    ${ligne("de")}${ligne("a")}${grille}
+    <div class="per-bas"><button class="per-lien ${e.grille ? "on" : ""}" data-per="grille" data-ou="${ou}">${ic("calendrier", "s")}Grille</button>
+      ${e.a.v ? `<button class="per-lien" data-per="seule" data-ou="${ou}">Date seule</button>` : ""}<span class="sp"></span>
+      <button class="btn pri" data-per="ok" data-ou="${ou}">${texteOK}</button></div></div>`;
+}
+const etatPer = ou => ou === "tri" ? tri?.per : ui.per;
+// Redessine seulement le formulaire (pas toute la fiche)
+// Fiche : redessine avec le formulaire ouvert, le fait apparaître en douceur et le rend visible
+function montrerFormPassage() {
+  rendreFiche();
+  if (!ui.ajoutPassage) return;
+  const f = $("per-fiche");
+  f?.scrollIntoView({ block: "nearest", behavior: animOK() ? "smooth" : "auto" });
+  animer(f, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: DOUX });
+}
+function majPeriode(ou) {
+  const e = etatPer(ou), el = $(`per-${ou}`);
+  if (e && el) el.outerHTML = periodeHTML(e, ou, ou === "tri" ? "Ajouter" : e.remplace != null ? "OK" : "Ajouter");
+}
+function clicPeriode(el, d) {
+  const ou = d.ou, e = etatPer(ou);
+  if (!e) return;
+  if (d.perPrec) { const b = e[d.perBout]; b.v = convertirBout(b.v, d.perPrec, d.perBout === "a"); b.p = d.perPrec; }
+  else if (d.perSaison) {
+    // Saison : remplit De et À (hiver 2025 = déc. 2024 → févr. 2025) ; l'année est celle du champ « De »
+    let an = +e.de.v.slice(0, 4) || new Date().getFullYear();
+    if (d.perSaison === "hiver" && e.de.v.slice(5, 7) === "12") an++;
+    const s = periodeSaison(d.perSaison, an);
+    e.de = { p: "mois", v: s.de }; e.a = { p: "mois", v: s.a }; e.an = +s.a.slice(0, 4); e.clic = 0;
+  }
+  else if (d.perMois) {
+    // Grille : 1er mois touché = début, 2e = fin
+    if (e.clic === 0) { e.de = { p: "mois", v: d.perMois }; e.a = { p: "mois", v: "" }; e.clic = 1; }
+    else {
+      e.a = { p: "mois", v: d.perMois }; e.clic = 0;
+      if (valeurBout(e.a.v) < valeurBout(e.de.v)) [e.de, e.a] = [e.a, e.de];
+    }
+  }
+  else if (d.per === "grille") { e.grille = !e.grille; e.clic = 0; }
+  else if (d.per === "an-" || d.per === "an+") e.an += d.per === "an-" ? -1 : 1;
+  else if (d.per === "seule") { e.a = { p: e.a.p, v: "" }; e.clic = 0; }
+  else if (d.per === "ok") { validerPeriode(ou); return; }
+  majPeriode(ou);
+  vibrer();
+}
+function validerPeriode(ou) {
+  const e = etatPer(ou), date = lirePeriode(e);
+  if (!date) { afficherToast("Date incomplète"); return; }
+  if (ou === "tri") {
+    const mt = ficheTri();
+    if (mt) { tri.per = etatPeriode(); majFicheTri(mt, x => { x.passages = trierPassages([...x.passages, date]); }); }
+    return;
+  }
+  const m = ficheOuverte();
+  if (!m) return;
+  ui.ajoutPassage = false;
+  const final = ajouterPassage(m, date, e.remplace);
+  ui.per = null;
+  const chips = document.querySelectorAll(".passages .chip:not(.plus)");
+  animer(chips[m.passages.indexOf(final)], [{ transform: "scale(.4)", opacity: 0 }, { transform: "scale(1.12)", offset: .6 }, { transform: "none", opacity: 1 }], { duration: 380 });
+}
 
 // --- « Voir aussi » : titres proches + même réalisateur / studio / auteur / chaîne ---
 // Les suggestions sont cherchées une fois par fiche (gardées en mémoire tant que l'appli est ouverte).
@@ -965,7 +1131,7 @@ function ajouterAvecStatut(infos, type, statut, bouton) {
     if (m.statut === statut) return;
     const avant = m.statut;
     m.statut = statut;
-    if (statut === "encours" && !m.debut) m.debut = moisActuel();
+    periodeSelonStatut(m, statut);
     ecrireMedia(m);
     afficherToast(`« ${m.titre} » : ${nomStatut(statut, type)}`, () => { m.statut = avant; ecrireMedia(m); apresAjout(); });
   } else {
@@ -982,7 +1148,7 @@ function ajouterAvecStatut(infos, type, statut, bouton) {
 function garderEtReinitialiser(m, statut) {
   const avant = structuredClone(m);
   Object.assign(m, {
-    statut, test: false, revoir: false, note: 0, coeur: false, passages: [], debut: statut === "encours" ? moisActuel() : "",
+    statut, test: false, revoir: false, note: 0, coeur: false, passages: statut === "encours" ? [`${moisActuel()}/`] : [],
     support: "", tags: [], avis: "", saisons: { actif: false, total: 0, vues: [] }, cree: Date.now()
   });
   ecrireMedia(m);
@@ -1047,7 +1213,7 @@ function lancerRecherche() {
 // Crée une fiche (depuis la recherche, l'ajout à la main, le tableau ou le partage)
 function creerFiche(infos, type, statut) {
   const m = normaliser(nouvelId(), { ...infos, type, statut, cree: Date.now() });
-  if (statut === "encours") m.debut = moisActuel();
+  periodeSelonStatut(m, statut);
   ecrireMedia(m);
   // Copie de l'affiche en arrière-plan (la fiche est déjà enregistrée)
   if (m.image) copierImage(m.image).then(mini => {
@@ -1284,15 +1450,15 @@ document.addEventListener("dblclick", e => {
 
 // ---------- Mode « Trier » (Réglages › Trier mes fiches) ----------
 // Les fiches incomplètes défilent une par une (comme des cartes) : je remplis ce que j'ai choisi
-// (note, date pour la frise, affiche, tags). Quand tout est rempli, la carte passe toute seule.
-// Glisser à gauche = passer (je verrai plus tard), glisser à droite = revenir à la précédente.
+// (note, date pour la frise, affiche, tags). La carte ne passe qu'avec le bouton « Suivant »
+// (« Précédent » pour revenir) : rien ne bouge tout seul.
 const CHAMPS_TRI = {
   note:    { nom: "Note",         applique: m => ["fini", "abandon", "encours"].includes(m.statut), manque: m => !m.note },
   date:    { nom: "Date (frise)", applique: m => ["fini", "abandon"].includes(m.statut), manque: m => !m.passages.length },
   affiche: { nom: "Affiche",      applique: () => true, manque: m => !m.image && !m.miniature },
   tags:    { nom: "Tags",         applique: () => true, manque: m => !m.tags.length }
 };
-let tri = null;   // { etape: "choix" | "cartes" | "fin", types, champs, ids, i, affiches, precision, faites }
+let tri = null;   // { etape: "choix" | "cartes" | "fin", types, champs, ids, i, affiches, per (date en saisie), faites }
 const aCompleter = (m, champs) => [...champs].filter(c => CHAMPS_TRI[c].applique(m) && CHAMPS_TRI[c].manque(m));
 const ficheTri = () => tri && tri.etape === "cartes" ? medias.get(tri.ids[tri.i]) : null;
 function candidatsTri() {
@@ -1300,8 +1466,8 @@ function candidatsTri() {
     .sort((a, b) => TYPES.findIndex(t => t.id === a.type) - TYPES.findIndex(t => t.id === b.type) || a.titre.localeCompare(b.titre, "fr"));
 }
 function ouvrirTri() {
-  tri = tri || { types: new Set([ui.type]), champs: new Set(["note", "date", "affiche"]), affiches: new Map(), precision: "annee" };
-  Object.assign(tri, { etape: "choix", ids: [], i: 0, faites: 0 });
+  tri = tri || { types: new Set([ui.type]), champs: new Set(["note", "date", "affiche"]), affiches: new Map() };
+  Object.assign(tri, { etape: "choix", ids: [], i: 0, faites: 0, per: etatPeriode() });
   ouvrirVoile("trier", estPC() ? "centre" : "plein", `<div class="fenetre tri" role="dialog" aria-label="Trier mes fiches">
     <div class="fhd"><h2>Trier mes fiches</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div id="tri-corps"></div></div>`);
@@ -1335,8 +1501,7 @@ function majTri() {
         <div class="fi-me">${[typeDe(m.type).un, m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}<br>
           <i class="dot" style="background:var(--st-${m.statut})"></i> ${nomStatut(m.statut, m.type)}</div></div></div>
       ${blocs}</div>
-    <div class="deux tri-bas"><button class="btn" data-action="tri-passer">${ic("retour", "s")}Passer</button><button class="btn pri" data-action="tri-suivant">Suivant${ic("droite", "s")}</button></div>
-    <p class="tri-aide">Glisse la carte : à gauche pour passer, à droite pour revenir.</p>`;
+    <div class="deux tri-bas"><button class="btn" data-action="tri-precedent" ${tri.i ? "" : "disabled"}>${ic("retour", "s")}Précédent</button><button class="btn pri" data-action="tri-suivant">Suivant${ic("droite", "s")}</button></div>`;
   if (tri.champs.has("affiche") && !tri.affiches.has(m.id)) {
     tri.affiches.set(m.id, null);
     chercherAffiches(m.type, m.titre).then(urls => { tri.affiches.set(m.id, urls); if (ficheTri()?.id === m.id) majAffichesTri(m); })
@@ -1346,16 +1511,8 @@ function majTri() {
 function blocTri(c, m) {
   if (c === "note") return `<div class="tri-bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
     <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>`;
-  if (c === "date") {
-    const p = tri.precision, an = new Date().getFullYear();
-    return `<div class="tri-bloc col"><span class="k">${MOTS[m.type].passage}${m.passages.length ? ` : ${m.passages.map(x => echapper(texteDate(x))).join(", ")}` : ""}</span>
-      <div class="seg">${[["annee", "Année"], ["saison", "Saison"], ["mois", "Mois"], ["jour", "Jour"]].map(([k, nn]) => `<button data-tri-precision="${k}" aria-pressed="${p === k}">${nn}</button>`).join("")}</div>
-      <div class="pas-champs">${p === "jour" ? `<input id="tri-jour" type="date" value="${jourActuel()}" max="${jourActuel()}">`
-        : p === "mois" ? `<input id="tri-mois" type="month" value="${moisActuel()}" max="${moisActuel()}">`
-        : p === "saison" ? `<select id="tri-saison">${Object.entries(SAISONS).map(([k, v]) => `<option value="${k}">${v.nom}</option>`).join("")}</select><input id="tri-an" type="number" inputmode="numeric" value="${an}" min="1900" max="2100">`
-        : `<input id="tri-an" type="number" inputmode="numeric" value="${an}" min="1900" max="2100">`}
-        <button class="btn pri" data-action="tri-date">Ajouter</button></div></div>`;
-  }
+  if (c === "date") return `<div class="tri-bloc col"><span class="k">${MOTS[m.type].passage}${m.passages.length ? ` : ${m.passages.map(x => echapper(texteDate(x))).join(", ")}` : ""}</span>
+      ${periodeHTML(tri.per || (tri.per = etatPeriode()), "tri", "Ajouter")}</div>`;
   if (c === "affiche") return `<div class="tri-bloc col"><span class="k">Affiche</span><div class="tri-affs" id="tri-affs">${affichesTriHTML(m)}</div>
     <div class="trois"><button class="btn" data-action="tri-google">${ic("cherche", "s")}Google Images</button><button class="btn" data-action="tri-coller">${ic("lien", "s")}Coller</button><button class="btn" data-action="tri-fichier">${ic("photo", "s")}Fichier</button></div>
     <div class="aff-lien" id="tri-lien" hidden><input id="tri-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false"><button class="btn pri" data-action="tri-url-ok">OK</button></div>
@@ -1370,19 +1527,19 @@ function affichesTriHTML(m) {
   return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
 }
 function majAffichesTri(m) { if ($("tri-affs")) $("tri-affs").innerHTML = affichesTriHTML(m); }
-// Après une modif dans le mode Trier : on enregistre, on redessine, et on passe tout seul si tout est rempli
+// Après une modif dans le mode Trier : on enregistre et on redessine (la carte reste : on passe avec « Suivant »)
 function majFicheTri(m, modif) {
   modif(m);
   ecrireMedia(m);
   majTri();
   rendreContenu();
-  if (!aCompleter(m, tri.champs).length) setTimeout(() => { if (ficheTri()?.id === m.id) avancerTri(1, true); }, 550);
 }
 function avancerTri(sens, complete = false) {
   if (complete) tri.faites++;
   const carte = $("tri-carte");
   const suite = () => {
     tri.i = Math.max(0, tri.i + sens);
+    tri.per = etatPeriode();
     if (tri.i >= tri.ids.length) tri.etape = "fin";
     majTri();
     animer($("tri-carte"), [{ opacity: 0, transform: `translateX(${sens * 40}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: DOUX });
@@ -1392,25 +1549,6 @@ function avancerTri(sens, complete = false) {
   if (a) setTimeout(suite, 270); else suite();
   vibrer();
 }
-// Glisser la carte
-let glisseTri = null;
-document.addEventListener("pointerdown", e => {
-  const c = e.target.closest("#tri-carte");
-  if (!c || e.target.closest("button, input, select, textarea, .tri-affs")) return;
-  glisseTri = { x0: e.clientX, dx: 0, c };
-});
-document.addEventListener("pointermove", e => {
-  if (!glisseTri) return;
-  glisseTri.dx = e.clientX - glisseTri.x0;
-  glisseTri.c.style.transform = `translateX(${glisseTri.dx}px) rotate(${glisseTri.dx / 30}deg)`;
-});
-document.addEventListener("pointerup", () => {
-  if (!glisseTri) return;
-  const { dx, c } = glisseTri; glisseTri = null;
-  if (dx < -90) avancerTri(1);
-  else if (dx > 90 && tri.i > 0) avancerTri(-1);
-  else { c.style.transition = `transform .3s ${DOUX}`; c.style.transform = "none"; setTimeout(() => { c.style.transition = ""; }, 320); }
-});
 
 // ---------- 8. Gestes et animations ----------
 
@@ -1553,19 +1691,27 @@ function changerStatut(m, s) {
   if (s === avant) return;
   majFiche(m, x => {
     x.statut = s;
-    if (s === "encours" && !x.debut) x.debut = moisActuel();
+    periodeSelonStatut(x, s);
   });
-  // Passé en « Fini » : proposer d'ajouter la date d'aujourd'hui
-  if (s === "fini" && !m.passages.some(p => p.startsWith(moisActuel()))) {
+  // Passé en « Fini » sans période en cours : proposer d'ajouter le mois actuel
+  if (s === "fini" && !m.passages.some(p => p.split("/").pop().startsWith(moisActuel()))) {
     afficherToast(`${nomStatut(s, m.type)} : ajouter ${NOMS_MOIS[new Date().getMonth()]} ?`, () => ajouterPassage(m, moisActuel()), "Ajouter");
   }
 }
-function ajouterPassage(m, date) {
+// Ajoute un passage (ou remplace celui n° « remplace »). S'il y a une période en cours et qu'on ajoute
+// une date seule après son début, elle la ferme : « depuis mars » + « nov. » → « mars → nov. ».
+function ajouterPassage(m, date, remplace = null) {
   majFiche(m, x => {
-    x.passages = [...x.passages, date].filter((p, i, t) => t.indexOf(p) === i).sort((a, b) => valeurDate(a) - valeurDate(b));
+    let l = remplace != null ? x.passages.filter((_, i) => i !== remplace) : [...x.passages];
+    const ouvert = l.find(estOuvert);
+    if (ouvert && !date.includes("/") && valeurBout(date) >= valeurBout(ouvert.slice(0, -1))) { l = l.filter(p => p !== ouvert); date = `${ouvert.slice(0, -1)}/${date}`; }
+    else if (ouvert && !estOuvert(date) && remplace == null) l = l.filter(p => p !== ouvert);
+    x.passages = trierPassages([...l, date]);
+    if (estOuvert(date)) return;
     x.revoir = false;
     if (x.statut !== "fini" && x.statut !== "abandon") x.statut = "fini";
   });
+  return date;
 }
 
 // Un seul « écouteur » pour tous les clics : on regarde ce qui a été touché
@@ -1729,26 +1875,10 @@ document.addEventListener("click", e => {
     case "saison-plus": if (m) majFiche(m, x => { x.saisons.total++; }); return;
     case "saison-moins": if (m) majFiche(m, x => { x.saisons.total = Math.max(0, x.saisons.total - 1); x.saisons.vues = x.saisons.vues.filter(n => n <= x.saisons.total); }); return;
     case "ajout-passage":
-      ui.ajoutPassage = !ui.ajoutPassage; rendreFiche();
-      if (ui.ajoutPassage) { const f = document.querySelector(".pas-form"); f?.scrollIntoView({ block: "nearest", behavior: animOK() ? "smooth" : "auto" }); animer(f, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: DOUX }); }
-      return;
-    case "valider-passage": {
-      if (!m) return;
-      let date = "";
-      if (ui.precision === "jour") date = $("pas-jour").value;
-      else if (ui.precision === "mois") date = $("pas-mois").value;
-      else if (ui.precision === "saison") date = `${$("pas-an").value}-${$("pas-saison").value}`;
-      else date = String($("pas-an").value);
-      if (!dateValide(date)) { afficherToast("Date incomplète"); return; }
-      ui.ajoutPassage = false;
-      ajouterPassage(m, date);
-      const chips = document.querySelectorAll(".passages .chip:not(.plus)");
-      animer(chips[m.passages.indexOf(date)], [{ transform: "scale(.4)", opacity: 0 }, { transform: "scale(1.12)", offset: .6 }, { transform: "none", opacity: 1 }], { duration: 380 });
-      return;
-    }
-    case "debut":
-      if (!m) return;
-      ouvrirMenu(el, [{ html: `${ic("poubelle", "s")}Enlever la date de début`, danger: true }], () => majFiche(m, x => { x.debut = ""; }));
+      // Retoucher « + Ajouter » pendant une modification repart sur un ajout ; sinon ouvre / ferme
+      if (ui.ajoutPassage && ui.per?.remplace == null) { ui.ajoutPassage = false; ui.per = null; }
+      else { ui.ajoutPassage = true; ui.per = etatPeriode(); }
+      montrerFormPassage();
       return;
     // --- Ajouter ---
     case "choisir-image": $("mo-fichier").click(); return;
@@ -1792,7 +1922,7 @@ document.addEventListener("click", e => {
     document.querySelectorAll(".note .et.on").forEach((s, i) => animer(s, [{ transform: "scale(1)" }, { transform: "scale(1.4)", offset: .45 }, { transform: "scale(1)" }], { duration: 360, delay: i * 45 }));
     return;
   }
-  if (d.precision) { ui.precision = d.precision; rendreFiche(); return; }
+  if (el.closest(".per")) { clicPeriode(el, d); return; }
   // --- Mode Trier ---
   if (tri) {
     const mt = ficheTri();
@@ -1800,20 +1930,11 @@ document.addEventListener("click", e => {
     if (d.triChamp) { if (tri.champs.has(d.triChamp)) { if (tri.champs.size > 1) tri.champs.delete(d.triChamp); } else tri.champs.add(d.triChamp); majTri(); return; }
     if (d.action === "tri-go") { tri.ids = candidatsTri().map(x => x.id); tri.i = 0; tri.faites = 0; tri.etape = "cartes"; majTri(); return; }
     if (d.action === "tri-encore") { tri.etape = "choix"; majTri(); return; }
-    if (d.action === "tri-passer") { avancerTri(1); return; }
+    if (d.action === "tri-precedent") { if (tri.i > 0) avancerTri(-1); return; }
     if (d.action === "tri-suivant") { avancerTri(1, mt && !aCompleter(mt, tri.champs).length); return; }
     if (mt) {
       if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); return; }
       if (d.action === "tri-coeur") { majFicheTri(mt, x => { x.coeur = !x.coeur; }); return; }
-      if (d.triPrecision) { tri.precision = d.triPrecision; majTri(); return; }
-      if (d.action === "tri-date") {
-        const p = tri.precision;
-        const date = p === "jour" ? $("tri-jour").value : p === "mois" ? $("tri-mois").value
-          : p === "saison" ? `${$("tri-an").value}-${$("tri-saison").value}` : String($("tri-an").value);
-        if (!dateValide(date)) { afficherToast("Date incomplète"); return; }
-        majFicheTri(mt, x => { x.passages = [...new Set([...x.passages, date])].sort((a, b) => valeurDate(a) - valeurDate(b)); });
-        return;
-      }
       if (d.triAff !== undefined) { const u = tri.affiches.get(mt.id)?.[+d.triAff]; if (u) { appliquerAffiche(mt, { image: u }, false); majFicheTri(mt, () => {}); } return; }
       if (d.action === "tri-google") { ouvrirGoogleImages(mt); return; }
       if (d.action === "tri-coller") { collerAffiche(mt, false, $("tri-lien")).then(() => { if (mt.image) majFicheTri(mt, () => {}); }); return; }
@@ -1844,9 +1965,10 @@ document.addEventListener("click", e => {
   }
   if (d.passage !== undefined && m) {
     const k = +d.passage, date = m.passages[k];
-    ouvrirMenu(el, [{ html: `${ic("poubelle", "s")}Enlever ${echapper(texteDate(date))}`, danger: true }], () => {
-      majFiche(m, x => { x.passages = x.passages.filter((_, i) => i !== k); });
-      afficherToast("Date enlevée", () => ajouterPassage(m, date));
+    ouvrirMenu(el, [{ html: `${ic("crayon", "s")}Modifier` }, { html: `${ic("poubelle", "s")}Enlever ${echapper(texteDate(date))}`, danger: true }], i => {
+      if (i === 0) { ui.ajoutPassage = true; ui.per = etatPeriode(date, k); montrerFormPassage(); return; }
+      majFiche(m, x => { x.passages = x.passages.filter((_, j) => j !== k); });
+      afficherToast("Date enlevée", () => majFiche(m, x => { x.passages = trierPassages([...x.passages, date]); }));
     });
     return;
   }
@@ -1933,6 +2055,8 @@ let rechercheTelOuverte = false;
 let minuteurAvis = null;
 document.addEventListener("input", e => {
   const t = e.target;
+  // Cases De / À d'une période : on garde la saisie (pour ne rien perdre si le formulaire est redessiné)
+  if (t.dataset.perChamp) { const s = etatPer(t.dataset.ou); if (s) s[t.dataset.perChamp].v = t.value; return; }
   if (t.id === "recherche-pc" || t.id === "recherche-tel") { ui.recherche = t.value; rendreContenu(); return; }
   // Curseurs Texte / Jaquettes (PC) : l'écran change pendant qu'on fait glisser
   if (t.dataset.curseur) {
@@ -2038,7 +2162,7 @@ function validerCase(annuler = false) {
     const v = c.value;
     if (col === "titre" && v.trim()) m.titre = v.trim();
     if (col === "annee") m.annee = +v > 0 ? Math.round(+v) : null;
-    if (col === "statut" && STATUTS.includes(v) && v !== m.statut) { m.statut = v; if (v === "encours" && !m.debut) m.debut = moisActuel(); }
+    if (col === "statut" && STATUTS.includes(v) && v !== m.statut) { m.statut = v; periodeSelonStatut(m, v); }
     if (col === "note" && +v >= 0 && +v <= 5) m.note = +v;
     if (col === "support") m.support = v;
     if (col === "tags") m.tags = [...new Set(v.split(",").map(x => x.trim()).filter(Boolean))];
@@ -2113,7 +2237,7 @@ const COLONNES = [
   { header: "Créateur", key: "createur", width: 24 }, { header: "Statut", key: "statut", width: 12 },
   { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7 }, { header: "Note", key: "note", width: 7 },
   { header: "Coup de cœur", key: "coeur", width: 12 }, { header: "Vu", key: "vu", width: 26 },
-  { header: "Commencé", key: "debut", width: 14 }, { header: "Support", key: "support", width: 14 },
+  { header: "Support", key: "support", width: 14 },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
   { header: "Saisons", key: "saisons", width: 9 }, { header: "Avis", key: "avis", width: 40 },
   { header: "Image", key: "image", width: 30 }, { header: "Ajouté le", key: "ajoute", width: 12 }, { header: "Test", key: "test", width: 6 }
@@ -2130,7 +2254,7 @@ async function exporterExcel() {
     const ws = ajouterFeuille(classeur, "Médias", COLONNES, liste.map(m => ({
       affiche: "", type: typeDe(m.type).un, titre: m.titre, annee: m.annee || "", createur: m.createur,
       statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", coeur: ouiNon(m.coeur),
-      vu: m.passages.map(p => texteDate(p)).join(" ; "), debut: texteDate(m.debut), support: m.support,
+      vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
       genres: m.genres.join(", "), tags: m.tags.join(", "),
       saisons: m.saisons.actif ? `${m.saisons.vues.length}/${m.saisons.total}` : "", avis: m.avis,
       image: m.image, ajoute: dateCourte(m.cree), test: ouiNon(m.test)
@@ -2208,7 +2332,8 @@ async function copierMiniaturesManquantes(liste) {
 }
 function chargerTest() {
   if (!confirm("Ajouter 200 fiches de test (50 par type) ? Elles s'effacent en un clic ensuite.")) return;
-  const liste = genererDonneesTest(nouvelId);
+  // (normaliser : les « débuts » de test deviennent des périodes, comme pour les vraies fiches)
+  const liste = genererDonneesTest(nouvelId).map(m => normaliser(m.id, m));
   ecrireMedias(liste);
   const nouveaux = [...new Set(liste.map(m => m.support).filter(Boolean))].filter(s => !donnees.supports.includes(s));
   if (nouveaux.length) { donnees.supports.push(...nouveaux); sauverDonnees(); }

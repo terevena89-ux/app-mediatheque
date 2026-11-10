@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.7.0 — 2026-11-10
+- Dates « Vu » : une période « De … À … » (chaque bout en jour, mois ou année), ou une date seule (« À » vide). Bouton « Grille » : on touche le mois de début puis celui de fin.
+- Saisons = raccourci qui remplit la période (hiver 2025 = déc. 2024 → févr. 2025). Les anciennes dates « été 2024 » deviennent « juin → août 2024 ».
+- « Commencé » disparaît : passer en « En cours » ouvre « depuis [ce mois] … » (pastille violette), passer en « Vu » ou « Abandonné » la ferme au mois actuel. Toucher une date : Modifier ou Enlever.
+- Frise : les périodes donnent les barres de durée (frise horizontale) et « oct. → déc. » dans la ligne du temps.
+- Mode Trier : la carte ne passe plus toute seule et ne se glisse plus ; boutons « Précédent » / « Suivant ». La date s'y saisit comme dans la fiche.
+- Excel : colonne « Commencé » retirée (les périodes sont dans « Vu ») ; les anciens fichiers se réimportent toujours.
+
 ## v0.6.0 — 2026-11-10
 - (bêta) Réglages › « Trier mes fiches » : les fiches incomplètes défilent une par une ; je choisis les types et quoi compléter (note, date pour la frise, affiche, tags). La carte passe toute seule quand tout est rempli ; glisser à gauche = passer, à droite = revenir.
 - Choisir l'affiche (et Trier) : bouton « Google Images » (recherche « titre affiche / jaquette / couverture ») + « Coller » qui met l'adresse d'image copiée.

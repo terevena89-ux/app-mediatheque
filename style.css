@@ -343,11 +343,32 @@ body.tel .panneau { display: none; }
 .sa.vue { background: var(--sunk); color: var(--ink); border-color: transparent; font-weight: 500; }
 .sa.encours { border-color: var(--st-encours); color: var(--st-encours); font-weight: 700; }
 .sa.plus, .sa.moins { min-width: 30px; color: var(--acc); }
-.pas-form { padding: 10px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
-.pas-champs { display: flex; gap: 8px; align-items: center; }
-.pas-champs input, .pas-champs select { flex: 1; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
-.pas-champs #pas-an { flex: 0 0 90px; }
-.pas-champs .btn { flex-shrink: 0; }
+/* Période « En cours » (pas encore finie) : pastille violette */
+.chip.ouvert { border-color: var(--st-encours); color: var(--st-encours); }
+/* Saisie d'une date ou d'une période : saisons (raccourci), lignes De / À, grille de mois */
+.per { margin: 8px 0 4px; padding: 10px; border: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 9px; }
+.per-saisons { display: flex; gap: 4px; align-items: center; }
+.per-mini { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+.per-sai { height: 26px; padding: 0 8px; white-space: nowrap; border: 1px solid var(--line); border-radius: 13px; font-size: 12px; background: var(--surface); transition: background-color .2s, color .2s, transform .38s var(--ressort); }
+.per-sai.on { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
+.per-sai:active, .per-mois button:active, .per-lien:active { transform: scale(.92); transition-duration: .08s; }
+.per-ligne { display: flex; gap: 8px; align-items: center; }
+.per-t { width: 20px; flex-shrink: 0; color: var(--muted); font-size: 12.5px; }
+.seg.petit { flex: 0 0 auto; }
+.seg.petit button { height: 26px; padding: 0 6px; font-size: 11.5px; }
+.per-ligne input { flex: 1; min-width: 0; height: 34px; padding: 0 4px 0 7px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+.per-an { display: flex; align-items: center; justify-content: space-between; }
+.per-an button { width: 34px; height: 28px; display: grid; place-items: center; color: var(--muted); }
+.per-mois { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
+.per-mois button { height: 32px; border-radius: 2px; font-size: 12px; text-align: center; transition: background-color .2s, color .2s, transform .38s var(--ressort); }
+.per-mois button.futur { color: var(--faint); }
+.per-mois button.dans { background: var(--acc-soft); }
+.per-mois button.bout { background: var(--acc); color: var(--acc-ink); font-weight: 700; }
+.per-bas { display: flex; align-items: center; gap: 12px; }
+.per-lien { display: inline-flex; align-items: center; gap: 5px; height: 30px; color: var(--acc); font-size: 12.5px; font-weight: 500; }
+.per-lien.on { text-decoration: underline; text-underline-offset: 3px; }
+.per-bas .btn { flex-shrink: 0; }
+.tri-bloc .per { margin: 4px 0 0; }
 .avis { display: block; width: 100%; margin-top: 10px; padding: 9px 11px; min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); line-height: 1.45; outline: none; }
 .avis:focus { border-color: var(--acc); }
 
