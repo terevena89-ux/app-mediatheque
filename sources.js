@@ -1,11 +1,14 @@
 // =========================================================
-// Recherche en ligne + copie des images.
+// Recherche en ligne, « Voir aussi », copie des images.
 // Services gratuits, sans compte ni clé :
 //   - Séries : TVmaze (api.tvmaze.com)
 //   - Livres / BD / mangas : Open Library (openlibrary.org)
-//   - Films et jeux : Wikipédia en français (et en anglais pour l'affiche si besoin)
-// Si un service ne répond pas, la recherche renvoie une liste vide :
+//   - Films et jeux (et « Voir aussi ») : Wikipédia en français,
+//     et en anglais pour les affiches
+// Si un service ne répond pas, on renvoie une liste vide :
 // on peut toujours ajouter « à la main ».
+// On ne garde que des images au FORMAT AFFICHE (plus hautes que larges) :
+// les logos et captures en largeur sont écartés.
 // =========================================================
 
 // Un résultat = { titre, annee, createur, genres: [], image, info }
@@ -47,6 +50,9 @@ function trouverGenres(...textes) {
   return res.slice(0, 3);
 }
 const annee = t => { const m = String(t || "").match(/\b(1[89]\d\d|20\d\d)\b/); return m ? +m[1] : null; };
+const simplifier = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+// Une image au format affiche : nettement plus haute que large
+const enHauteur = th => th && th.width && th.height && th.height >= th.width * 1.15;
 
 // ---------- Séries : TVmaze ----------
 async function series(q, signal) {
@@ -56,51 +62,60 @@ async function series(q, signal) {
     annee: annee(s.premiered),
     createur: s.network?.name || s.webChannel?.name || "",
     genres: trouverGenres((s.genres || []).join(" ")),
-    image: (s.image?.medium || "").replace(/^http:/, "https:"),
+    image: (s.image?.medium || "").replace(/^http:/, "https:"),   // affiches de TVmaze : toujours en hauteur
     info: [annee(s.premiered), s.network?.name || s.webChannel?.name].filter(Boolean).join(" · ")
   }));
 }
 
 // ---------- Livres, BD, mangas : Open Library ----------
+const versLivre = l => ({
+  titre: l.title,
+  annee: l.first_publish_year || null,
+  createur: (l.author_name || []).slice(0, 2).join(", "),
+  genres: trouverGenres((l.subject || []).slice(0, 15).join(" ")),
+  image: l.cover_i ? `https://covers.openlibrary.org/b/id/${l.cover_i}-M.jpg` : "",   // couvertures : en hauteur
+  info: [l.first_publish_year, (l.author_name || [])[0]].filter(Boolean).join(" · ")
+});
+const CHAMPS_OL = "title,author_name,first_publish_year,cover_i,subject";
 async function livres(q, signal) {
-  const champs = "title,author_name,first_publish_year,cover_i,subject";
-  const res = await lireJSON(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${champs}&limit=10`, signal);
-  return (res.docs || []).map(l => ({
-    titre: l.title,
-    annee: l.first_publish_year || null,
-    createur: (l.author_name || []).slice(0, 2).join(", "),
-    genres: trouverGenres((l.subject || []).slice(0, 15).join(" ")),
-    image: l.cover_i ? `https://covers.openlibrary.org/b/id/${l.cover_i}-M.jpg` : "",
-    info: [l.first_publish_year, (l.author_name || [])[0]].filter(Boolean).join(" · ")
-  }));
+  const res = await lireJSON(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=${CHAMPS_OL}&limit=10`, signal);
+  return (res.docs || []).map(versLivre);
 }
 
-// ---------- Films et jeux : Wikipédia ----------
-// 1. Recherche dans Wikipédia en français (titres français, petite description).
-// 2. Les affiches manquent souvent en français : on les demande à la version anglaise.
-async function wikipedia(q, type, signal) {
-  const motCle = type === "jeu" ? "jeu vidéo" : "film";
+// ---------- Wikipédia (films, jeux, et « Voir aussi ») ----------
+// Mot ajouté à la recherche pour tomber sur la bonne page, et mots attendus dans la description
+const MOT_CLE = { film: "film", jeu: "jeu vidéo", serie: "série télévisée", livre: "roman" };
+const ATTENDU = { film: /film|téléfilm/i, jeu: /jeu/i, serie: /série|feuilleton/i, livre: /roman|livre|nouvelle|bande dessinée|manga|essai|récit/i };
+// Pages à écarter : personnages, lieux, saisons, épisodes…
+const PAS_UNE_OEUVRE = /personnage|lieu fictif|famille fictive|planète|organisation|univers de fiction|^épisode/i;
+
+// Pages Wikipédia en français pour une recherche (avec description et lien vers la page anglaise)
+async function pagesWiki(recherche, signal, limite = 10) {
   const fr = await lireJSON("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({
-    action: "query", format: "json", origin: "*", generator: "search", gsrsearch: `${q} ${motCle}`, gsrlimit: "10",
+    action: "query", format: "json", origin: "*", generator: "search", gsrsearch: recherche, gsrlimit: String(limite),
     prop: "pageimages|description|langlinks", piprop: "thumbnail", pithumbsize: "300", pilicense: "any",
     lllang: "en", lllimit: "max", redirects: "1"
   }), signal);
-  const pages = Object.values(fr.query?.pages || {}).sort((a, b) => a.index - b.index);
-  // On garde les pages qui parlent bien d'un film / d'un jeu (d'après la description)
-  // (on écarte les pages « liste », « 2025 en jeu vidéo »…)
-  const bonnes = pages.filter(p => !/^(liste|\d{4} en )/i.test(p.title) && !/év[éè]nements|^liste/i.test(p.description || "")
-    && (!p.description || new RegExp(type === "jeu" ? "jeu" : "film|téléfilm", "i").test(p.description)));
-  const liste = (bonnes.length ? bonnes : pages).slice(0, 8);
-
-  // Affiches : le Wikipédia français n'a souvent pas le droit de garder les affiches et
-  // montre à la place le logo du titre. On demande donc d'abord l'image de la page anglaise
-  // (qui a la vraie affiche), et on garde l'image française seulement en secours.
+  return Object.values(fr.query?.pages || {}).sort((a, b) => a.index - b.index);
+}
+// Garde les pages qui parlent bien du bon type d'œuvre (d'après la description) ;
+// écarte les pages « liste », « 2025 en jeu vidéo »…
+function duBonType(pages, type, strict = false) {
+  if (strict) pages = pages.filter(p => p.description);   // « Voir aussi » : seulement les pages bien décrites
+  return pages.filter(p => !/^(liste|saison \d|épisode|\d{4} en )/i.test(p.title) && !/év[éè]nements|^liste/i.test(p.description || "")
+    && !PAS_UNE_OEUVRE.test(p.description || "")
+    && (!p.description || ATTENDU[type].test(p.description)));
+}
+// Transforme des pages en résultats, avec une affiche EN HAUTEUR quand il y en a une.
+// Le Wikipédia français n'a souvent pas le droit de garder les affiches (il montre le logo
+// du titre) : on regarde d'abord l'image de la page anglaise, puis la française.
+async function versResultats(liste, signal) {
   const anglais = liste.filter(p => p.langlinks?.[0]?.["*"]).map(p => p.langlinks[0]["*"]);
-  let imagesEn = {};
+  const imagesEn = {};
   if (anglais.length) {
     try {
       const en = await lireJSON("https://en.wikipedia.org/w/api.php?" + new URLSearchParams({
-        action: "query", format: "json", origin: "*", titles: anglais.join("|"), prop: "pageimages",
+        action: "query", format: "json", origin: "*", titles: anglais.slice(0, 40).join("|"), prop: "pageimages",
         piprop: "thumbnail", pithumbsize: "300", pilicense: "any", redirects: "1"
       }), signal);
       // Les titres ont pu être « normalisés » ou redirigés : on retrouve le titre d'origine
@@ -108,32 +123,129 @@ async function wikipedia(q, type, signal) {
       [...(en.query?.normalized || []), ...(en.query?.redirects || [])].forEach(n => { vers[n.to] = n.from; });
       Object.values(en.query?.pages || {}).forEach(p => {
         let t = p.title; while (vers[t]) t = vers[t];
-        if (p.thumbnail) imagesEn[t] = p.thumbnail.source;
+        if (p.thumbnail) imagesEn[t] = p.thumbnail;
       });
     } catch (e) { /* pas grave : sans affiche */ }
   }
   return liste.map(p => {
     const desc = p.description || "";
     // « Dune : Deuxième partie (film) » → « Dune : Deuxième partie »
-    const titre = p.title.replace(/\s*\((film|jeu vidéo|série télévisée)[^)]*\)\s*$/i, "");
+    const titre = p.title.replace(/\s*\((film|jeu vidéo|série télévisée|roman|manga|bande dessinée)[^)]*\)\s*$/i, "");
     // « film américain réalisé par Denis Villeneuve… » → créateur
-    const m = desc.match(/(?:réalisé par|de|développé par|édité par)\s+([A-ZÉÈ][^,;()]+?)(?:\s+(?:sorti|et|en|paru|publié)\b|[,;(]|$)/);
-    return {
-      titre, annee: annee(desc), createur: m ? m[1].trim() : "",
-      genres: trouverGenres(desc),
-      image: imagesEn[p.langlinks?.[0]?.["*"]] || p.thumbnail?.source || "",
-      info: desc
-    };
+    const m = desc.match(/(?:réalisé par|de|développé par|édité par|écrit par)\s+([A-ZÉÈ][^,;()]+?)(?:\s+(?:sorti|et|en|paru|publié)\b|[,;(]|$)/);
+    const en = imagesEn[p.langlinks?.[0]?.["*"]];
+    const image = enHauteur(en) ? en.source : enHauteur(p.thumbnail) ? p.thumbnail.source : "";
+    return { titre, annee: annee(desc), createur: m ? m[1].trim() : "", genres: trouverGenres(desc), image, info: desc, page: p.title };
   });
 }
+async function wikipedia(q, type, signal) {
+  const pages = await pagesWiki(`${q} ${MOT_CLE[type]}`, signal);
+  const bonnes = duBonType(pages, type);
+  return versResultats((bonnes.length ? bonnes : pages).slice(0, 8), signal);
+}
 
-// Point d'entrée : cherche selon le type (jeu, film, serie, livre)
+// Point d'entrée de la recherche : selon le type (jeu, film, serie, livre)
 export async function chercherEnLigne(type, texte, signal) {
   const q = String(texte || "").trim();
   if (q.length < 2) return [];
   if (type === "serie") return series(q, signal);
   if (type === "livre") return livres(q, signal);
   return wikipedia(q, type, signal);
+}
+
+// ---------- Autres affiches d'un même titre (« Choisir l'affiche ») ----------
+// Séries : les posters de TVmaze ; livres : les couvertures des éditions (Open Library) ;
+// films et jeux : les affiches des Wikipédia anglais et français (en hauteur seulement).
+const memeTitre = (a, b) => { const x = simplifier(a), y = simplifier(b); return x === y || x.includes(y) || y.includes(x); };
+const sansParentheses = t => t.replace(/\s*\([^)]*\)\s*$/, "");
+const https = u => (u || "").replace(/^http:/, "https:");
+export async function chercherAffiches(type, titre, signal) {
+  const urls = [];
+  const ajoute = u => { if (u && !urls.includes(u)) urls.push(u); };
+  const q = encodeURIComponent(titre);
+  if (type === "serie") {
+    const shows = (await lireJSON(`https://api.tvmaze.com/search/shows?q=${q}`, signal)).map(r => r.show).filter(s => memeTitre(s.name, titre)).slice(0, 2);
+    for (const s of shows) {
+      ajoute(https(s.image?.medium));
+      try {
+        const imgs = await lireJSON(`https://api.tvmaze.com/shows/${s.id}/images`, signal);
+        imgs.filter(i => i.type === "poster").forEach(i => ajoute(https(i.resolutions?.medium?.url || i.resolutions?.original?.url)));
+      } catch (e) { /* pas d'autres posters */ }
+    }
+  } else if (type === "livre") {
+    const docs = ((await lireJSON(`https://openlibrary.org/search.json?title=${q}&fields=key,title,cover_i&limit=5`, signal)).docs || [])
+      .filter(d => memeTitre(d.title, titre)).slice(0, 2);
+    const couverture = c => `https://covers.openlibrary.org/b/id/${c}-M.jpg`;
+    docs.forEach(d => d.cover_i && ajoute(couverture(d.cover_i)));
+    for (const d of docs) {
+      try {
+        const ed = await lireJSON(`https://openlibrary.org${d.key}/editions.json?limit=40`, signal);
+        (ed.entries || []).forEach(e => (e.covers || []).filter(c => c > 0).slice(0, 1).forEach(c => ajoute(couverture(c))));
+      } catch (e) { /* pas d'éditions */ }
+    }
+  } else {
+    const pages = duBonType(await pagesWiki(`${titre} ${MOT_CLE[type]}`, signal, 6), type).filter(p => memeTitre(sansParentheses(p.title), titre));
+    pages.forEach(p => { if (enHauteur(p.thumbnail)) ajoute(p.thumbnail.source); });
+    const anglais = pages.map(p => p.langlinks?.[0]?.["*"]).filter(Boolean);
+    if (anglais.length) {
+      const en = await lireJSON("https://en.wikipedia.org/w/api.php?" + new URLSearchParams({
+        action: "query", format: "json", origin: "*", titles: anglais.join("|"), prop: "pageimages",
+        piprop: "thumbnail", pithumbsize: "300", pilicense: "any", redirects: "1"
+      }), signal);
+      Object.values(en.query?.pages || {}).forEach(p => { if (enHauteur(p.thumbnail)) urls.unshift(p.thumbnail.source); });
+    }
+  }
+  return [...new Set(urls)].slice(0, 24);
+}
+
+// Séries sans affiche (Wikipédia montre souvent un titre en largeur) : on demande l'affiche à TVmaze
+async function completerSeries(liste, type, signal) {
+  if (type !== "serie") return liste;
+  await Promise.all(liste.filter(r => !r.image).map(async r => {
+    try {
+      const s = await lireJSON(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(r.titre)}`, signal);
+      if (s?.image?.medium) r.image = s.image.medium.replace(/^http:/, "https:");
+    } catch (e) { /* pas trouvée : sans affiche */ }
+  }));
+  return liste;
+}
+
+// ---------- « Voir aussi » ----------
+// proches  : pages Wikipédia « similaires » (fonction morelike de Wikipédia)
+// createur : autres œuvres du même réalisateur / studio / auteur / chaîne
+// m = la fiche (type, titre, createur, genres)
+export async function voirAussi(m, signal) {
+  const type = m.type;
+  const motCle = type === "livre" && m.genres.includes("Manga") ? "manga" : type === "livre" && m.genres.includes("BD") ? "bande dessinée" : MOT_CLE[type];
+  const pareil = r => simplifier(r.titre) === simplifier(m.titre);
+  const sansDoublons = liste => liste.filter((r, i, t) => !pareil(r) && t.findIndex(x => simplifier(x.titre) === simplifier(r.titre)) === i);
+
+  const proches = (async () => {
+    // 1. Retrouver la page Wikipédia de ce titre
+    const trouvees = duBonType(await pagesWiki(`${m.titre} ${motCle}`, signal, 3), type);
+    if (!trouvees.length) return [];
+    // 2. Pages similaires, du même type
+    const similaires = duBonType(await pagesWiki(`morelike:${trouvees[0].title}`, signal, 20), type, true)
+      .filter(p => p.title !== trouvees[0].title);
+    return completerSeries(sansDoublons(await versResultats(similaires.slice(0, 14), signal)).slice(0, 10), type, signal);
+  })().catch(() => []);
+
+  const createur = (async () => {
+    const c = String(m.createur || "").split(",")[0].trim();
+    if (!c) return [];
+    if (type === "livre") {
+      const res = await lireJSON(`https://openlibrary.org/search.json?author=${encodeURIComponent(c)}&fields=${CHAMPS_OL}&limit=20&sort=editions`, signal);
+      // (seulement les livres où l'auteur figure vraiment)
+      const deLui = (res.docs || []).filter(l => (l.author_name || []).some(a => simplifier(a).includes(simplifier(c))));
+      return sansDoublons(deLui.map(versLivre)).slice(0, 10);
+    }
+    // Phrase exacte dans le texte des pages : « réalisé par Ari Aster »…
+    const phrase = { film: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
+    const pages = duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 20), type, true);
+    return completerSeries(sansDoublons(await versResultats(pages.slice(0, 14), signal)).slice(0, 10), type, signal);
+  })().catch(() => []);
+
+  return { proches: await proches, createur: await createur };
 }
 
 // ---------- Copie des images ----------

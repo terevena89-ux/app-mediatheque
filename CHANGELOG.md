@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.3.0 — 2026-11-10
+- Ajouter : 4 petites icônes de statut à côté de chaque résultat (À voir, En cours, Vu, Réserve). Un titre déjà dans la médiathèque montre son statut (plus de doublons).
+- Fiche : section « Voir aussi » — titres proches (Wikipédia) et même réalisateur / studio / auteur / chaîne, ajout direct avec le statut.
+- Toucher l'affiche de la fiche : « Choisir l'affiche » (posters TVmaze pour les séries, couvertures des éditions pour les livres, Wikipédia pour films et jeux), photo / fichier, ou lien.
+- Seulement des images au format affiche (en hauteur) : les logos et captures en largeur sont écartés.
+- PC : deux curseurs dans Réglages — « Texte » (taille de l'écran) et « Jaquettes » (taille des affiches) — à la place de « Taille ».
+- PC : on élargit la barre de gauche, le panneau de la fiche et les colonnes du tableau en attrapant leur bord (double-clic = largeur de départ ; Réglages › Largeurs › Remettre).
+
 ## v0.2.0 — 2026-11-10
 - Films et jeux : la recherche prend maintenant la vraie affiche (Wikipédia anglais) au lieu du logo du titre.
 - Modifier › « Chercher l'affiche » : choisir la bonne affiche parmi celles trouvées en ligne (pour corriger les fiches déjà ajoutées).

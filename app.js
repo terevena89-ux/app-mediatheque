@@ -24,13 +24,13 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lireFeuille } from "./excel-style.js";
-import { chercherEnLigne, copierImage, reduireFichier } from "./sources.js";
+import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
 import { genererDonneesTest } from "./test.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.2.0";
+const VERSION = "v0.3.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -83,7 +83,9 @@ const SUPPORTS_DEPART = ["Cinéma", "Netflix", "Canal+", "Prime Video", "Disney+
 const CLE_REGLAGES = "mediatheque-reglages";
 let reglages = {
   theme: "auto", accent: null, police: "plex", onglets: "t2", animations: "completes", vibrations: "oui",
-  fichePC: "bandeau", frise: "horiz", vues: {}, tris: {}, type: "film", page: 0
+  fichePC: "bandeau", frise: "horiz", vues: {}, tris: {}, type: "film", page: 0,
+  // PC : taille du texte et des jaquettes (curseurs), largeurs réglées en glissant les bords
+  texte: 1.1, jaquettes: 1, largCote: null, largPanneau: null, colonnes: {}
 };
 try { Object.assign(reglages, JSON.parse(localStorage.getItem(CLE_REGLAGES)) || {}); } catch (e) { /* valeurs par défaut */ }
 function changerReglage(nom, valeur) {
@@ -346,7 +348,11 @@ largePC.addEventListener("change", () => { majMiseEnPage(); rendreTout(); });
 //   « frise » peut se combiner avec une fiche : #frise&fiche=ID
 let aNavigue = false;
 function aller(adresse) { aNavigue = true; location.hash = adresse; }
-function retour() { if (aNavigue) history.back(); else location.replace("#"); }
+function retour() {
+  if (aNavigue) { history.back(); return; }
+  // Page ouverte directement sur une fenêtre : on revient à la fiche si on était sur « Choisir l'affiche »
+  location.replace("#" + (adresse.affiche && adresse.fiche ? adresseFiche(adresse.fiche) : ""));
+}
 function lireAdresse() {
   const parts = decodeURIComponent(location.hash.slice(1)).split("&").filter(Boolean);
   const r = { frise: false, fiche: null, fenetre: null, id: null };
@@ -354,6 +360,7 @@ function lireAdresse() {
     if (p === "frise") r.frise = true;
     else if (p.startsWith("fiche=")) r.fiche = p.slice(6);
     else if (p.startsWith("modifier=")) { r.fenetre = "modifier"; r.id = p.slice(9); }
+    else if (p === "affiche") r.affiche = true;   // « Choisir l'affiche », par-dessus la fiche
     else r.fenetre = p;   // ajout, reglages, theme, supports
   });
   return r;
@@ -365,7 +372,7 @@ let ui = {
   type: TYPES.some(t => t.id === reglages.type) ? reglages.type : "film",
   page: [0, 1, 2].includes(reglages.page) ? reglages.page : 0,
   recherche: "", filtres: new Set(), friseTypes: new Set(),
-  ajoutPassage: false, precision: "mois"
+  ajoutPassage: false, precision: "mois", vaOnglet: "proches"
 };
 let adresse = lireAdresse();
 let ficheAffichee = null;   // id de la fiche ouverte (pour ne l'animer qu'à l'ouverture)
@@ -374,7 +381,11 @@ function router() {
   if (!pret()) return;
   const avant = adresse;
   adresse = lireAdresse();
-  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; }
+  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.vaOnglet = "proches"; }
+  // Fenêtre « Choisir l'affiche » (2e couche, au-dessus de la fiche)
+  const m = adresse.fiche && medias.get(adresse.fiche);
+  if (adresse.affiche && m && affChoix?.id !== m.id) ouvrirAffiche(m);
+  if (!adresse.affiche) { $("voile2").hidden = true; $("voile2").innerHTML = ""; affChoix = null; }
   fermerMenu(true);
   rendreTout();
   if (rechargerApres && !adresse.fenetre && !adresse.fiche) location.reload();
@@ -574,9 +585,14 @@ function rendreTableau() {
     <td data-col="vu">${echapper(m.passages.map(p => texteDate(p, true)).join(" · "))}</td>
     <td data-col="support">${echapper(m.support)}</td>
     <td data-col="tags">${echapper(m.tags.join(", "))}</td></tr>`;
-  $("contenu").innerHTML = `<div class="tab-wrap"><table class="tableau">
-    <colgroup><col style="width:44px"><col><col style="width:62px"><col style="width:118px"><col style="width:88px"><col style="width:36px"><col style="width:150px"><col style="width:110px"><col style="width:130px"></colgroup>
-    <thead><tr><th></th><th>Titre</th><th>Année</th><th>Statut</th><th>Note</th><th>♥</th><th>${MOTS[ui.type].passage}</th><th>Support</th><th>Tags</th></tr></thead>
+  // Colonnes : largeur réglée en glissant le bord de l'en-tête (le titre prend la place qui reste)
+  const COLS = [["vg", "", 44], ["titre", "Titre", null], ["annee", "Année", 62], ["statut", "Statut", 118], ["note", "Note", 88],
+    ["coeur", "♥", 36], ["vu", MOTS[ui.type].passage, 140], ["support", "Support", 110], ["tags", "Tags", 120]];
+  // Le titre garde toujours au moins 160 px : s'il manque de place, le tableau défile de côté
+  const fixe = COLS.reduce((s, [k, , w]) => s + (w ? (reglages.colonnes[k] || w) : 0), 0);
+  $("contenu").innerHTML = `<div class="tab-wrap"><table class="tableau" style="min-width:${fixe + 160}px">
+    <colgroup>${COLS.map(([k, , w]) => `<col data-col="${k}" ${w ? `style="width:${reglages.colonnes[k] || w}px"` : ""}>`).join("")}</colgroup>
+    <thead><tr>${COLS.map(([k, n, w], i) => `<th>${n}${w && k !== "vg" ? `<i class="redim-col" data-col="${k}" title="Glisser pour élargir"></i>` : ""}${i === 0 ? "" : ""}</th>`).join("")}</tr></thead>
     <tbody>${[...principaux, ...bas].map(ligne).join("")}
       <tr class="nouveau"><td>${ic("plus", "s")}</td><td colspan="8"><input id="tab-nouveau" placeholder="Nouveau titre… (Entrée pour ajouter)" autocomplete="off"></td></tr></tbody></table></div>`;
 }
@@ -641,7 +657,7 @@ function ficheHTML(m) {
       : `<input id="pas-an" type="number" inputmode="numeric" value="${new Date().getFullYear()}" min="1900" max="2100">`}
       <button class="btn pri" data-action="valider-passage">Ajouter</button></div></div>`;
   return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
-    <div class="fi-tete">${vignette(m, "fi-aff")}
+    <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff")}<span class="fi-crayon">${ic("crayon")}</span></button>
       <div class="fi-tt"><h2>${echapper(m.titre)}</h2>
         <div class="fi-me">${[m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}${m.genres.length ? `<br>${echapper(m.genres.join(", "))}` : ""}</div></div>
       <div class="fi-btns"><button class="btn-icone" data-action="menu-fiche" aria-label="Plus d'actions">${ic("dots")}</button>
@@ -664,7 +680,85 @@ function ficheHTML(m) {
       <div class="bloc"><span class="k">Tags</span><span class="v tags">${m.tags.map(t => `<button class="chip tag" data-suppr-tag="${echapper(t)}" title="Enlever">${echapper(t)}<span class="x">×</span></button>`).join("")}
         <input data-champ="tag" list="liste-tags" placeholder="+ tag" aria-label="Ajouter un tag"><datalist id="liste-tags">${tousTags.map(t => `<option value="${echapper(t)}">`).join("")}</datalist></span></div>
       <textarea class="avis" data-champ="avis" rows="2" placeholder="Mon avis…" aria-label="Mon avis">${echapper(m.avis)}</textarea>
+      <div class="va" id="va">${vaHTML(m)}</div>
     </div>`;
+}
+
+// --- « Voir aussi » : titres proches + même réalisateur / studio / auteur / chaîne ---
+// Les suggestions sont cherchées une fois par fiche (gardées en mémoire tant que l'appli est ouverte).
+const vaCache = new Map();   // id de la fiche -> { etat, proches, createur }
+const NOM_CREATEUR = { film: "Même réalisateur", jeu: "Même studio", livre: "Même auteur", serie: "Même chaîne" };
+function vaHTML(m) {
+  const v = vaCache.get(m.id);
+  const onglets = [["proches", "Titres proches"], ...(m.createur ? [["createur", NOM_CREATEUR[m.type]]] : [])];
+  if (!onglets.some(o => o[0] === ui.vaOnglet)) ui.vaOnglet = "proches";
+  const liste = v?.[ui.vaOnglet] || [];
+  return `<div class="va-titre">Voir aussi</div>
+    ${onglets.length > 1 ? `<div class="seg va-onglets">${onglets.map(([k, n]) => `<button data-va="${k}" aria-pressed="${ui.vaOnglet === k}">${n}</button>`).join("")}</div>` : ""}
+    ${!v || v.etat === "charge" ? `<div class="aj-info">Recherche de suggestions…</div>`
+      : v.etat === "erreur" ? `<div class="aj-info">Suggestions indisponibles (pas de réseau ?)</div>`
+      : !liste.length ? `<div class="aj-info">Aucune suggestion trouvée.</div>`
+      : liste.map((r, i) => ligneResultat(r, m.type, `data-va-res="${i}"`, "va-" + i)).join("")}`;
+}
+function majVoirAussi() {
+  const m = ficheOuverte();
+  if (m && $("va")) $("va").innerHTML = vaHTML(m);
+}
+function chargerVoirAussi(m) {
+  if (vaCache.has(m.id)) return;
+  vaCache.set(m.id, { etat: "charge" });
+  voirAussi(m)
+    .then(r => vaCache.set(m.id, { etat: "fini", ...r }))
+    .catch(() => vaCache.set(m.id, { etat: "erreur" }))
+    .finally(() => { if (adresse.fiche === m.id) majVoirAussi(); });
+}
+
+// --- Choisir l'affiche (toucher l'affiche dans la fiche) ---
+// Une grille avec l'affiche actuelle et celles trouvées en ligne (seulement en hauteur),
+// plus « Photo / fichier » et « Coller un lien ».
+let affChoix = null;   // { id, liste: [{ image, legende }] }
+function ouvrirAffiche(m) {
+  affChoix = { id: m.id, liste: [] };
+  const v2 = $("voile2");
+  v2.className = "voile " + (estPC() ? "centre" : "bas");
+  v2.innerHTML = `<div class="fenetre affiches" role="dialog" aria-label="Choisir l'affiche">
+    <div class="fhd"><h2>Choisir l'affiche</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
+    <div class="aff-info">${ic("info", "s")}<span>Seulement des affiches en hauteur : les images larges (logos, captures) sont écartées.</span></div>
+    <div class="aff-grille" id="aff-grille"></div>
+    <div class="aff-lien" id="aff-lien" hidden><input id="aff-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false">
+      <button class="btn pri" data-action="aff-url-ok">OK</button></div>
+    <div class="deux aff-bas"><button class="btn" data-action="aff-fichier">${ic("photo", "s")}Photo / fichier</button>
+      <button class="btn" data-action="aff-lien">${ic("lien", "s")}Coller un lien</button></div>
+    <input type="file" id="aff-fichier" accept="image/*" hidden></div>`;
+  v2.hidden = false;
+  animer(v2.querySelector(".fenetre"), estPC() ? [{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }] : [{ transform: "translateY(100%)" }, { transform: "none" }], { duration: 320, easing: DOUX });
+  majGrilleAffiches(m, true);
+  // Seulement des affiches DU MÊME TITRE (autres éditions, autres posters…)
+  const source = { serie: "TVmaze", livre: "Édition", film: "Wikipédia", jeu: "Wikipédia" }[m.type];
+  chercherAffiches(m.type, m.titre).then(urls => {
+    if (!affChoix || affChoix.id !== m.id) return;
+    affChoix.liste = urls.filter(u => u !== m.image).map((u, i) => ({ image: u, legende: m.type === "livre" ? `${source} ${i + 1}` : source }));
+    majGrilleAffiches(m, false);
+  }).catch(() => majGrilleAffiches(m, false, true));
+}
+function majGrilleAffiches(m, enCours, erreur) {
+  if (!$("aff-grille")) return;
+  const actuelle = (m.miniature || m.image) ? `<div class="aff"><span class="aff-v on">${vignette(m)}<span class="coche">${ic("ok")}</span></span><small>Actuelle</small></div>` : "";
+  $("aff-grille").innerHTML = actuelle + affChoix.liste.map((a, i) => `<button class="aff" data-aff="${i}">
+      <span class="aff-v">${vignette({ titre: m.titre, image: a.image, miniature: "" })}</span><small>${echapper(a.legende)}</small></button>`).join("")
+    + (enCours ? `<div class="aff-attente">Recherche…</div>` : erreur ? `<div class="aff-attente">Recherche indisponible</div>`
+      : !affChoix.liste.length ? `<div class="aff-attente">Aucune autre affiche trouvée</div>` : "");
+}
+function appliquerAffiche(m, { image = "", miniature = "" }) {
+  const avant = { image: m.image, miniature: m.miniature };
+  m.image = image; m.miniature = miniature;
+  ecrireMedia(m);
+  if (image && !miniature) copierImage(image).then(mini => {
+    const x = medias.get(m.id);
+    if (mini && x && x.image === image) { x.miniature = mini; ecrireMedia(x); rafraichir(); }
+  });
+  retour();
+  afficherToast("Affiche changée", () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); });
 }
 
 // Affiche (ou met à jour) la fiche ouverte : panneau à droite sur PC, fenêtre du bas sur téléphone.
@@ -677,23 +771,24 @@ function rendreFiche(opts = {}) {
   if (opts.doux && saisie && m && ficheAffichee === m.id) return;
 
   if (!m) {
-    $("panneau").hidden = true; $("panneau").innerHTML = "";
+    $("panneau").hidden = $("redim-panneau").hidden = true; $("panneau").innerHTML = "";
     if ($("voile").dataset.quoi === "fiche") fermerVoile();
     ficheAffichee = null;
     return;
   }
   const nouvelle = ficheAffichee !== m.id;
   ficheAffichee = m.id;
+  chargerVoirAussi(m);
   if (estPC()) {
     if ($("voile").dataset.quoi === "fiche") fermerVoile();
-    $("panneau").hidden = false;
+    $("panneau").hidden = $("redim-panneau").hidden = false;
     $("panneau").className = "panneau fi-" + reglages.fichePC;
     const defil = $("panneau").scrollTop;
     $("panneau").innerHTML = `<div class="fiche">${ficheHTML(m)}</div>`;
     if (!nouvelle) $("panneau").scrollTop = defil;
     else animer($("panneau").firstChild, [{ opacity: 0, transform: "translateX(12px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: DOUX });
   } else {
-    $("panneau").hidden = true;
+    $("panneau").hidden = $("redim-panneau").hidden = true;
     const deja = $("voile").dataset.quoi === "fiche" && !$("voile").hidden;
     const feuille = deja ? $("voile").querySelector(".feuille") : null;
     if (feuille) {
@@ -738,15 +833,45 @@ function rendreFenetre(opts = {}) {
   if (nouvelle) animer($("voile").querySelector(".fenetre"), [{ opacity: 0, transform: "scale(.96) translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: DOUX });
 }
 
+// --- 4 petites icônes de statut (Ajouter et « Voir aussi ») ---
+// À voir (marque-page), En cours (lecture), Vu (coche), Réserve (boîte).
+// Un titre déjà dans ma médiathèque montre son statut : toucher une autre icône le change.
+const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
+const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && simplifier(x.titre) === simplifier(titre));
+function boutonsStatut(type, titre, attribut) {
+  const m = dejaLa(type, titre);
+  return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.map(([s, i]) =>
+    `<button ${attribut} data-statut="${s}" class="${m?.statut === s ? "on" : ""}" style="--c:var(--st-${s})" title="${nomStatut(s, type)}" aria-label="${nomStatut(s, type)}">${ic(i)}</button>`).join("")}</span>`;
+}
+function ajouterAvecStatut(infos, type, statut, bouton) {
+  const m = dejaLa(type, infos.titre);
+  if (m) {
+    if (m.statut === statut) return;
+    const avant = m.statut;
+    m.statut = statut;
+    if (statut === "encours" && !m.debut) m.debut = moisActuel();
+    ecrireMedia(m);
+    afficherToast(`« ${m.titre} » : ${nomStatut(statut, type)}`, () => { m.statut = avant; ecrireMedia(m); apresAjout(); });
+  } else {
+    const f = creerFiche(infos, type, statut);
+    afficherToast(`« ${f.titre} » ajouté`, () => { effacerMedias([f.id]); apresAjout(); });
+  }
+  apresAjout();
+  // L'icône choisie « saute » un peu
+  const sel = bouton && bouton.closest("[data-ligne]")?.dataset.ligne;
+  if (sel) animer(document.querySelector(`[data-ligne="${sel}"] .st4 button.on`), [{ transform: "scale(.6)" }, { transform: "scale(1.25)", offset: .55 }, { transform: "none" }], { duration: 380 });
+}
+// Après un ajout : listes, fenêtre Ajouter et « Voir aussi » se mettent à jour
+function apresAjout() { majAjout(); majVoirAussi(); rendreContenu(); }
+
 // --- Ajouter : recherche en ligne + ajout à la main ---
-let aj = null;   // { type, statut, texte, resultats, ajoutes: Set, etat, minuteur, controle }
+let aj = null;   // { type, texte, resultats, etat, minuteur, controle }
 function ouvrirAjout(prerempli = "") {
-  aj = { type: ui.type, statut: ["avoir", "encours", "fini"][ui.page], texte: prerempli, resultats: [], ajoutes: new Set(), etat: "" };
+  aj = { type: ui.type, texte: prerempli, resultats: [], etat: "" };
   ouvrirVoile("ajout", estPC() ? "centre" : "plein", `<div class="fenetre ajout" role="dialog" aria-label="Ajouter">
     <div class="fhd"><h2>Ajouter</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div class="seg aj-types">${TYPES.map(t => `<button data-aj-type="${t.id}">${ic(t.id, "s")}${t.un}</button>`).join("")}</div>
     <label class="aj-champ">${ic("cherche")}<input id="aj-texte" type="search" placeholder="Titre…" autocomplete="off" aria-label="Titre"></label>
-    <div class="seg aj-statuts" id="aj-statuts"></div>
     <div id="aj-res" class="aj-res"></div></div>`);
   $("aj-texte").value = prerempli;
   majAjout();
@@ -756,18 +881,19 @@ function ouvrirAjout(prerempli = "") {
 function majAjout() {
   if (!aj || !$("aj-res")) return;   // fenêtre fermée entre-temps
   document.querySelectorAll("[data-aj-type]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ajType === aj.type));
-  $("aj-statuts").innerHTML = ["avoir", "encours", "fini", "reserve"].map(s =>
-    `<button data-aj-statut="${s}" aria-pressed="${aj.statut === s}">${nomStatut(s, aj.type)}</button>`).join("");
   const t = aj.texte.trim();
-  const cle = r => simplifier(r.titre) + "|" + (r.annee || "");
   $("aj-res").innerHTML = !t ? `<div class="aj-info">Tape un titre : l'appli cherche l'affiche et les infos.</div>` :
-    `<button class="aj-r manuel ${aj.ajoutes.has("manuel|" + simplifier(t)) ? "ajoute" : ""}" data-aj-manuel>${ic("plus")}<span class="aj-t">Ajouter « ${echapper(t)} » sans recherche</span></button>
+    `<div class="aj-r manuel" data-ligne="aj-m">${ic("plus")}<span class="aj-t"><b>« ${echapper(t)} »</b><small>sans recherche</small></span>${boutonsStatut(aj.type, t, "data-aj-manuel")}</div>
     ${aj.etat === "charge" ? `<div class="aj-info">Recherche…</div>` : aj.etat === "erreur" ? `<div class="aj-info">Recherche en ligne indisponible : ajoute à la main.</div>`
       : aj.etat === "fini" && !aj.resultats.length ? `<div class="aj-info">Aucun résultat en ligne.</div>` : ""}
-    ${aj.resultats.map((r, i) => `<button class="aj-r ${aj.ajoutes.has(cle(r)) ? "ajoute" : ""}" data-aj-res="${i}">
-      <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
-      <span class="aj-t"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
-      <span class="aj-plus">${ic(aj.ajoutes.has(cle(r)) ? "ok" : "plus")}</span></button>`).join("")}`;
+    ${aj.resultats.map((r, i) => ligneResultat(r, aj.type, `data-aj-res="${i}"`, "aj-" + i)).join("")}`;
+}
+// Une ligne de résultat (Ajouter, « Voir aussi ») : affiche, titre, infos, 4 icônes de statut
+function ligneResultat(r, type, attribut, cle) {
+  return `<div class="aj-r" data-ligne="${cle}">
+    <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
+    <span class="aj-t"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
+    ${boutonsStatut(type, r.titre, attribut)}</div>`;
 }
 function lancerRecherche() {
   clearTimeout(aj.minuteur);
@@ -849,6 +975,7 @@ function enregistrerModif() {
     miniature: brouillon.miniatureChoisie ?? (changeImage ? "" : m.miniature)
   }));
   ecrireMedia(m);
+  vaCache.delete(m.id);   // titre ou créateur ont pu changer : on recherchera les suggestions
   if (changeImage && image && brouillon.miniatureChoisie === undefined) copierImage(image).then(mini => {
     if (mini && medias.get(m.id)) { medias.get(m.id).miniature = mini; ecrireMedia(medias.get(m.id)); rafraichir(); }
   });
@@ -875,7 +1002,9 @@ function ouvrirReglages() {
     <div class="groupe">
       <button class="reg" data-aller="theme"><span>Thème</span><span class="val">${NOMS_THEME[reglages.theme]}${ic("droite")}</span></button>
       <div class="reg"><span>Couleur</span><span class="accents">${ACCENTS.map(a => `<button class="pastille-acc" data-accent="${a.id}" aria-pressed="${accent === a.id}" title="${a.nom}" aria-label="${a.nom}"></button>`).join("")}</span></div>
-      ${estPC() ? `<div class="reg"><span>Taille</span>${seg("taille", [["normale", "Normale"], ["grande", "Grande"], ["tresgrande", "Très grande"]], document.documentElement.dataset.taille)}</div>
+      ${estPC() ? `<div class="reg"><span>Texte</span><span class="curseur"><input type="range" min="0.85" max="1.5" step="0.05" value="${reglages.texte}" data-curseur="texte" aria-label="Taille du texte"><b>${Math.round(reglages.texte * 100)} %</b></span></div>
+        <div class="reg"><span>Jaquettes</span><span class="curseur"><input type="range" min="0.7" max="2" step="0.05" value="${reglages.jaquettes}" data-curseur="jaquettes" aria-label="Taille des jaquettes"><b>${Math.round(reglages.jaquettes * 100)} %</b></span></div>
+        <button class="reg" data-action="largeurs"><span>Largeurs (barre, fiche, colonnes)</span><span class="val">Remettre</span></button>
         <div class="reg"><span>Police</span>${seg("police", [["plex", "IBM Plex Sans"], ["figtree", "Figtree"]], reglages.police)}</div>
         <div class="reg"><span>Fiche</span>${seg("fichePC", [["bandeau", "Bandeau"], ["flou", "Fond flou"], ["simple", "Simple"]], reglages.fichePC)}</div>`
       : `<div class="reg"><span>Onglets du bas</span>${seg("onglets", [["t1", "Cases"], ["t2", "Bloc"], ["t3", "Classeur"], ["t4", "Tuiles"]], reglages.onglets)}</div>
@@ -919,8 +1048,8 @@ function ouvrirMenu(ancre, items, choisir, { classe = "" } = {}) {
     `<button data-m="${i}" class="${it.coche ? "coche" : ""} ${it.danger ? "danger" : ""}">${it.html || echapper(it.nom)}${it.coche ? ic("ok", "m-ok") : ""}</button>`).join("");
   el.hidden = false;
   // Placé sous le bouton, sans dépasser de l'écran.
-  // (sur PC, Réglages › Taille agrandit toute la page avec un « zoom » : les positions
-  //  mesurées sont déjà agrandies, on les divise donc par ce zoom avant de placer le menu)
+  // (si la page entière était agrandie avec un « zoom », les positions mesurées seraient déjà
+  //  agrandies : on les divise par ce zoom ; aujourd'hui seul #appli est zoomé, pas les menus)
   const z = parseFloat(getComputedStyle(document.body).zoom) || 1;
   const r = ancre.getBoundingClientRect();
   const l = el.offsetWidth * z, h = el.offsetHeight * z;
@@ -941,6 +1070,68 @@ function fermerMenu(tout_de_suite) {
   const a = animer(el, [{ opacity: 1 }, { opacity: 0, transform: "scale(.96)" }], { duration: 130, easing: "ease-in" });
   setTimeout(() => { if (!menu) el.hidden = true; }, a ? 120 : 0);
 }
+
+// ---------- PC : tailles (curseurs) et largeurs (bords à glisser) ----------
+// « Texte » = zoom de l'écran de l'appli (texte, boutons, espaces).
+// « Jaquettes » = taille des affiches ; on la divise par le zoom du texte pour qu'elle n'en dépende pas.
+function appliquerTailles() {
+  const r = document.documentElement.style;
+  r.setProperty("--zt", reglages.texte);
+  r.setProperty("--jq", reglages.jaquettes / reglages.texte);
+  if (reglages.largCote) r.setProperty("--larg-cote", reglages.largCote + "px"); else r.removeProperty("--larg-cote");
+  if (reglages.largPanneau) r.setProperty("--larg-panneau", reglages.largPanneau + "px"); else r.removeProperty("--larg-panneau");
+  poserTraitStatut(); poserPastilleVues();
+}
+// Bords à attraper : barre de gauche, panneau de la fiche, colonnes du tableau.
+// Double-clic sur un bord = largeur de départ.
+const BORNES = { cote: [150, 380], panneau: [280, 720], col: [36, 600] };
+let redim = null;
+document.addEventListener("pointerdown", e => {
+  const h = e.target.closest(".redim, .redim-col");
+  if (!h || !estPC() || e.button > 0) return;
+  e.preventDefault();
+  const type = h.dataset.redim || "col";
+  const el = type === "cote" ? $("cote") : type === "panneau" ? $("panneau") : document.querySelector(`.tableau col[data-col="${h.dataset.col}"]`);
+  if (!el) return;
+  redim = { type, h, el, x0: e.clientX, depart: type === "col" ? parseFloat(el.style.width) : el.offsetWidth, w: null, col: h.dataset.col };
+  h.classList.add("actif"); document.body.classList.add("redim-en-cours");
+  try { h.setPointerCapture(e.pointerId); } catch (err) { /* rien */ }
+});
+document.addEventListener("pointermove", e => {
+  if (!redim) return;
+  const dx = (e.clientX - redim.x0) / reglages.texte;   // le zoom du texte agrandit aussi les mouvements
+  const [mini, maxi] = BORNES[redim.type];
+  const w = Math.round(Math.max(mini, Math.min(maxi, redim.depart + (redim.type === "panneau" ? -dx : dx))));
+  redim.w = w;
+  if (redim.type === "cote") document.documentElement.style.setProperty("--larg-cote", w + "px");
+  else if (redim.type === "panneau") document.documentElement.style.setProperty("--larg-panneau", w + "px");
+  else {
+    redim.el.style.width = w + "px";
+    // la largeur minimale du tableau suit (titre ≥ 160 px)
+    const t = redim.el.closest("table");
+    const fixe = [...t.querySelectorAll("col")].reduce((s, c) => s + (parseFloat(c.style.width) || 0), 0);
+    t.style.minWidth = fixe + 160 + "px";
+  }
+  poserTraitStatut(); poserPastilleVues();
+});
+document.addEventListener("pointerup", () => {
+  if (!redim) return;
+  const r = redim; redim = null;
+  r.h.classList.remove("actif"); document.body.classList.remove("redim-en-cours");
+  if (r.w === null) return;
+  if (r.type === "cote") changerReglage("largCote", r.w);
+  else if (r.type === "panneau") changerReglage("largPanneau", r.w);
+  else { reglages.colonnes[r.col] = r.w; changerReglage("colonnes", reglages.colonnes); }
+});
+document.addEventListener("dblclick", e => {
+  const h = e.target.closest(".redim, .redim-col");
+  if (!h) return;
+  const type = h.dataset.redim || "col";
+  if (type === "cote") changerReglage("largCote", null);
+  else if (type === "panneau") changerReglage("largPanneau", null);
+  else { delete reglages.colonnes[h.dataset.col]; changerReglage("colonnes", reglages.colonnes); rendreContenu(); }
+  appliquerTailles();
+});
 
 // ---------- 8. Gestes et animations ----------
 
@@ -1109,7 +1300,7 @@ document.addEventListener("click", e => {
   }
   const el = e.target.closest("button, [data-fiche], td[data-col], .points i");
   if (!el) {
-    if (e.target === $("voile")) retour();   // toucher le fond sombre ferme la fenêtre
+    if (e.target === $("voile") || e.target === $("voile2")) retour();   // toucher le fond sombre ferme la fenêtre
     return;
   }
   const d = el.dataset;
@@ -1218,11 +1409,26 @@ document.addEventListener("click", e => {
       return;
     // --- Ajouter ---
     case "choisir-image": $("mo-fichier").click(); return;
+    // --- Choisir l'affiche ---
+    case "choisir-affiche": if (m) aller(adresseFiche(m.id) + "&affiche"); return;
+    case "aff-fichier": $("aff-fichier").click(); return;
+    case "aff-lien": $("aff-lien").hidden = false; $("aff-url").focus(); return;
+    case "aff-url-ok": {
+      const url = lienValide($("aff-url").value);
+      if (!url) { afficherToast("Adresse d'image invalide"); return; }
+      if (m) appliquerAffiche(m, { image: url });
+      return;
+    }
     case "chercher-affiche": chercherAffiche(); return;
     case "enregistrer-modif": enregistrerModif(); return;
     // --- Réglages ---
     case "deconnexion":
       if (confirm("Se déconnecter ? Tes fiches restent en sécurité dans ton compte.")) signOut(auth).then(() => location.reload());
+      return;
+    case "largeurs":
+      changerReglage("largCote", null); changerReglage("largPanneau", null); changerReglage("colonnes", {});
+      appliquerTailles(); rendreContenu();
+      afficherToast("Largeurs remises comme au départ");
       return;
     case "notes": NotesIdees.ouvrir(donnees.idees, texte => { donnees.idees = texte; sauverDonnees(); }); return;
     case "export": exporterExcel(); return;
@@ -1242,6 +1448,7 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.precision) { ui.precision = d.precision; rendreFiche(); return; }
+  if (d.aff !== undefined && affChoix && m) { const a = affChoix.liste[+d.aff]; if (a) appliquerAffiche(m, { image: a.image }); return; }
   if (d.moRes !== undefined && brouillon?.affiches) {
     const r = brouillon.affiches[+d.moRes];
     $("mo-image").value = r.image;
@@ -1271,28 +1478,21 @@ document.addEventListener("click", e => {
   if (d.supprTag && m) { majFiche(m, x => { x.tags = x.tags.filter(t => t !== d.supprTag); }); return; }
   // Ajouter
   if (d.ajType) { aj.type = d.ajType; majAjout(); lancerRecherche(); return; }
-  if (d.ajStatut) { aj.statut = d.ajStatut; majAjout(); return; }
-  if (d.ajManuel !== undefined) {
-    const t = aj.texte.trim(); if (!t) return;
-    const cle = "manuel|" + simplifier(t);
-    if (aj.ajoutes.has(cle)) return;
-    const f = creerFiche({ titre: t }, aj.type, aj.statut);
-    aj.ajoutes.add(cle); majAjout();
-    afficherToast(`« ${t} » ajouté`, () => { effacerMedias([f.id]); aj?.ajoutes.delete(cle); majAjout(); rafraichir(); });
-    rafraichirFond();
+  if (d.statut && d.ajManuel !== undefined && aj) {
+    const t = aj.texte.trim(); if (t) ajouterAvecStatut({ titre: t }, aj.type, d.statut, el);
     return;
   }
-  if (d.ajRes !== undefined) {
-    const r = aj.resultats[+d.ajRes]; if (!r) return;
-    const cle = simplifier(r.titre) + "|" + (r.annee || "");
-    if (aj.ajoutes.has(cle)) return;
-    const f = creerFiche(r, aj.type, aj.statut);
-    aj.ajoutes.add(cle); majAjout();
-    animer(document.querySelector(`[data-aj-res="${d.ajRes}"] .aj-plus`), [{ transform: "scale(.5)" }, { transform: "scale(1.3)", offset: .6 }, { transform: "none" }], { duration: 380 });
-    afficherToast(`« ${r.titre} » ajouté`, () => { effacerMedias([f.id]); aj?.ajoutes.delete(cle); majAjout(); rafraichir(); });
-    rafraichirFond();
+  if (d.statut && d.ajRes !== undefined && aj) {
+    const r = aj.resultats[+d.ajRes]; if (r) ajouterAvecStatut(r, aj.type, d.statut, el);
     return;
   }
+  if (d.statut && d.vaRes !== undefined) {
+    const v = vaCache.get(adresse.fiche), m2 = ficheOuverte();
+    const r = v && m2 && v[ui.vaOnglet]?.[+d.vaRes];
+    if (r) ajouterAvecStatut(r, m2.type, d.statut, el);
+    return;
+  }
+  if (d.va) { ui.vaOnglet = d.va; majVoirAussi(); return; }
   // Réglages
   if (d.accent && el.closest(".accents")) {
     changerReglage("accent", d.accent); document.documentElement.dataset.accent = d.accent;
@@ -1304,7 +1504,6 @@ document.addEventListener("click", e => {
     changerReglage(nom, d.valeur);
     el.closest(".seg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el));
     if (nom === "police") document.documentElement.dataset.police = d.valeur;
-    if (nom === "taille") { document.documentElement.dataset.taille = d.valeur; setTimeout(() => { poserTraitStatut(); poserPastilleVues(); }, 50); }
     if (nom === "onglets") { document.documentElement.dataset.onglets = d.valeur; requestAnimationFrame(poserPlaquetteOnglets); }
     if (nom === "animations") document.documentElement.dataset.anim = d.valeur;
     if (nom === "frise" && adresse.frise) { rendreEntete(); rendreContenu(); }
@@ -1350,6 +1549,13 @@ let minuteurAvis = null;
 document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "recherche-pc" || t.id === "recherche-tel") { ui.recherche = t.value; rendreContenu(); return; }
+  // Curseurs Texte / Jaquettes (PC) : l'écran change pendant qu'on fait glisser
+  if (t.dataset.curseur) {
+    changerReglage(t.dataset.curseur, +t.value);
+    t.nextElementSibling.textContent = Math.round(+t.value * 100) + " %";
+    appliquerTailles();
+    return;
+  }
   if (t.id === "aj-texte" && aj) { aj.texte = t.value; lancerRecherche(); return; }
   if (t.dataset.champ === "avis") {
     const m = ficheOuverte(); if (!m) return;
@@ -1381,6 +1587,13 @@ document.addEventListener("change", async e => {
   if (t.dataset.sup !== undefined) {
     const v = t.value.trim();
     if (v) { donnees.supports[+t.dataset.sup] = v; sauverDonnees(); }
+    return;
+  }
+  if (t.id === "aff-fichier") {
+    const f = t.files[0]; t.value = "";
+    if (!f || !m) return;
+    try { appliquerAffiche(m, { miniature: await reduireFichier(f) }); }
+    catch (err) { afficherToast("Image illisible"); }
     return;
   }
   if (t.id === "mo-fichier") {
