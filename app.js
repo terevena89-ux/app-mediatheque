@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.8.3";
+const VERSION = "v0.9.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -1586,7 +1586,8 @@ function filmsDec(cats) {
       pris.add(k); return true;
     });
 }
-function melanger(t) { for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; } return t; }
+// Les cartes passent dans l'ordre alphabétique (sans tenir compte des accents ni des majuscules)
+const alphabetique = t => t.sort((a, b) => a.titre.localeCompare(b.titre, "fr", { sensitivity: "base", numeric: true }) || a.annee - b.annee);
 const filmDec = () => dec && tri?.mode === "decouvrir" && tri.etape === "cartes" ? dec.file[dec.i] || null : null;
 // Affiche, réalisateur, genres : cherchés en ligne (Wikipédia), gardés en mémoire ; null = recherche en cours
 function infosDec(f) {
@@ -1697,7 +1698,7 @@ function majDecouvrir() {
   dec.file.slice(dec.i + 1, dec.i + 6).forEach(infosDec);
 }
 function lancerDecouvrir() {
-  dec = { file: melanger(filmsDec(catsDec())), i: 0, infos: new Map(), affiches: new Map(), affOuvert: false, vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
+  dec = { file: alphabetique(filmsDec(catsDec())), i: 0, infos: new Map(), affiches: new Map(), affOuvert: false, vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
   tri.etape = "cartes";
   majTri();
 }
