@@ -1,5 +1,8 @@
 # Médiathèque — journal des nouveautés
 
+## v0.8.2 — 2026-11-10
+- Téléphone : dans les fenêtres plein écran (Trier, Découvrir…), le message « Annuler » s'affiche tout en bas, plus par-dessus les boutons.
+
 ## v0.8.1 — 2026-11-10
 - Découvrir : les infos et affiches des 5 films suivants sont chargées à l'avance (les cartes s'affichent sans attendre).
 - Sur l'affiche de la carte : petite croix = enlever cette affiche (pas la bonne), petit crayon = en choisir une autre sous la carte (affiches trouvées, Google Images, Coller). La fiche créée garde l'affiche choisie.

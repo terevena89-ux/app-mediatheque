@@ -541,6 +541,9 @@ body.pc .st4 button.on:hover { background: var(--c); color: #fff; }
   max-width: calc(100vw - 24px); padding: 10px 10px 10px 16px; border-radius: 10px; background: var(--ink); color: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); font-size: 14px; }
 .toast button { color: var(--acc); font-weight: 700; padding: 6px 8px; filter: brightness(1.6); white-space: nowrap; }
 body.pc .toast { bottom: 24px; }
+/* Fenêtre plein écran ouverte (Trier, Découvrir…) : pas d'onglets en bas, le message « Annuler » descend tout en bas
+   (sinon il couvre les boutons Non / À voir / Réserve / Vu) */
+body:has(#voile.plein:not([hidden])) .toast { bottom: calc(14px + env(safe-area-inset-bottom)); }
 
 /* =========================================================
    FRISE
