@@ -1,5 +1,9 @@
 # Médiathèque — journal des nouveautés
 
+## v0.8.1 — 2026-11-10
+- Découvrir : les infos et affiches des 5 films suivants sont chargées à l'avance (les cartes s'affichent sans attendre).
+- Sur l'affiche de la carte : petite croix = enlever cette affiche (pas la bonne), petit crayon = en choisir une autre sous la carte (affiches trouvées, Google Images, Coller). La fiche créée garde l'affiche choisie.
+
 ## v0.8.0 — 2026-11-10
 - (bêta) « Trier mes fiches » › onglet **Découvrir** : des films connus qui ne sont pas encore dans ma liste, par catégories à cocher (Disney + Pixar + remakes, DreamWorks et autres animés, Ghibli, Marvel, DC, action, Star Wars, classiques, meilleurs films français — ~470 films). Grande affiche ; glisser à droite = Vu, à gauche = Pas intéressé ; boutons À voir / Réserve ; « Voir aussi » sous la carte ; « Annuler » après chaque choix.
 - « Pas intéressé » : caché partout (recherche, Voir aussi, Découvrir), gardé dans un onglet « Pas intéressés » de l'export Excel (relu à l'import).

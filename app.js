@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.8.0";
+const VERSION = "v0.8.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -1592,21 +1592,71 @@ function infosDec(f) {
   chercherEnLigne("film", `${f.titre} ${f.annee}`)
     .then(res => res.find(r => memeOeuvre(r.titre, r.annee, f.titre, f.annee)) || res.find(r => r.annee === f.annee) || {})
     .catch(() => ({}))
-    .then(r => { dec.infos.set(k, r); if (filmDec() && cleFilm(filmDec()) === k) majCarteDec(); });
+    .then(r => {
+      dec.infos.set(k, r);
+      prechargerImage(r.image);
+      if (filmDec() && cleFilm(filmDec()) === k) majCarteDec();
+    });
   return null;
 }
+// Le navigateur télécharge l'image à l'avance : elle s'affiche tout de suite quand la carte arrive
+function prechargerImage(url) { if (url) { const im = new Image(); im.decoding = "async"; im.src = url; } }
+// Sur l'affiche : × = enlever cette affiche (pas la bonne), crayon = en choisir une autre (sous la carte)
 function carteDecHTML(f) {
   const r = dec.infos.get(cleFilm(f));
   const cat = CATEGORIES.find(c => c.id === f.cat);
   return `<div class="dec-carte" id="dec-carte">
     <span class="dec-etiq vu">Vu</span><span class="dec-etiq non">Non</span>
-    ${vignette({ titre: f.titre, image: r?.image || "", miniature: "" }, "dec-aff", true).replace(" loading=\"lazy\"", "")}
+    <div class="dec-aff-bloc">${vignette({ titre: f.titre, image: r?.image || "", miniature: "" }, "dec-aff", true).replace(" loading=\"lazy\"", "")}
+      ${r?.image ? `<button class="dec-mini suppr" data-action="dec-aff-suppr" aria-label="Enlever cette affiche">${ic("x", "s")}</button>` : ""}
+      <button class="dec-mini modif ${dec.affOuvert ? "on" : ""}" data-action="dec-aff-modif" aria-label="Choisir une autre affiche">${ic("crayon", "s")}</button></div>
     <h3>${echapper(f.titre)}</h3>
-    <div class="dec-me">${[f.annee, r?.createur, cat?.nom].filter(Boolean).map(echapper).join(" · ")}</div></div>`;
+    <div class="dec-me">${[f.annee, r?.createur, cat?.nom].filter(Boolean).map(echapper).join(" · ")}</div></div>
+    ${dec.affOuvert ? affDecHTML(f) : ""}`;
 }
 function majCarteDec() {
   const f = filmDec();
   if (f && $("dec-zone")) $("dec-zone").innerHTML = carteDecHTML(f);
+}
+// Choisir une autre affiche : bande d'affiches trouvées en ligne + Google Images / Coller / lien
+function affDecHTML(f) {
+  const urls = dec.affiches.get(cleFilm(f)), actuelle = dec.infos.get(cleFilm(f))?.image;
+  const bande = urls == null ? `<span class="aj-info">Recherche d'affiches…</span>`
+    : !urls.length ? `<span class="aj-info">Aucune affiche trouvée : essaie Google Images.</span>`
+    : urls.map((u, i) => `<button class="tri-a ${u === actuelle ? "on" : ""}" data-dec-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
+  return `<div class="dec-affs"><div class="tri-affs">${bande}</div>
+    <div class="trois"><button class="btn" data-action="dec-aff-google">${ic("cherche", "s")}Google Images</button><button class="btn" data-action="dec-aff-coller">${ic("lien", "s")}Coller</button><button class="btn" data-action="dec-aff-fermer">${ic("ok", "s")}OK</button></div>
+    <div class="aff-lien" id="dec-lien" hidden><input id="dec-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false"><button class="btn pri" data-action="dec-aff-url">OK</button></div></div>`;
+}
+function ouvrirAffDec() {
+  const f = filmDec();
+  if (!f) return;
+  dec.affOuvert = !dec.affOuvert;
+  const k = cleFilm(f);
+  if (dec.affOuvert && !dec.affiches.has(k)) {
+    dec.affiches.set(k, null);
+    chercherAffiches("film", f.titre).catch(() => []).then(urls => {
+      dec.affiches.set(k, urls);
+      if (filmDec() && cleFilm(filmDec()) === k && dec.affOuvert) majCarteDec();
+    });
+  }
+  majCarteDec();
+}
+// Change l'affiche du film affiché ("" = sans affiche) ; elle servira pour la fiche créée
+function changerAffDec(url) {
+  const f = filmDec();
+  if (!f) return;
+  const k = cleFilm(f);
+  dec.infos.set(k, { ...(dec.infos.get(k) || {}), image: url });
+  majCarteDec();
+}
+async function collerAffDec() {
+  let texte = "";
+  try { texte = await navigator.clipboard.readText(); } catch (e) { /* lecture refusée */ }
+  const url = lienValide((texte.match(/https?:\/\/\S+/) || [""])[0]);
+  if (url) { changerAffDec(url); return; }
+  const l = $("dec-lien"); if (l) { l.hidden = false; l.querySelector("input")?.focus(); }
+  afficherToast(texte ? "Ce qui est copié n'est pas une adresse d'image" : "Copie d'abord l'adresse de l'image (appui long › Copier l'adresse de l'image)");
 }
 function majDecouvrir() {
   const c = $("tri-corps");
@@ -1638,12 +1688,12 @@ function majDecouvrir() {
       <button class="dec-rond vu" data-dec="fini" aria-label="Vu">${ic("ok")}<small>Vu</small></button></div>
     <button class="va-btn ${dec.vaOuvert ? "ouvert" : ""}" data-action="dec-va" aria-expanded="${dec.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
     <div class="va" id="dec-va" ${dec.vaOuvert ? "" : "hidden"}>${dec.vaOuvert ? decVaHTML() : ""}</div>`;
-  // Affiche du film affiché + des deux suivants (pour qu'elles soient prêtes)
+  // Infos et affiche du film affiché + des 5 suivants, chargées à l'avance (pour que ça défile sans attendre)
   infosDec(f);
-  dec.file.slice(dec.i + 1, dec.i + 3).forEach(infosDec);
+  dec.file.slice(dec.i + 1, dec.i + 6).forEach(infosDec);
 }
 function lancerDecouvrir() {
-  dec = { file: melanger(filmsDec(catsDec())), i: 0, infos: new Map(), vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
+  dec = { file: melanger(filmsDec(catsDec())), i: 0, infos: new Map(), affiches: new Map(), affOuvert: false, vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
   tri.etape = "cartes";
   majTri();
 }
@@ -1665,14 +1715,14 @@ function actionDec(statut) {
   const i = dec.i;
   dec.faits++;
   afficherToast(`« ${f.titre} » : ${statut === "rejet" ? "pas intéressé" : nomStatut(statut, "film")}`, () => {
-    annuler(); dec.i = i; dec.faits--; dec.vaOuvert = false; dec.va = null; rendreContenu(); majTri();
+    annuler(); dec.i = i; dec.faits--; dec.vaOuvert = false; dec.va = null; dec.affOuvert = false; rendreContenu(); majTri();
   });
   rendreContenu();
   // La carte s'en va : à droite (Vu), à gauche (Non), vers le haut (À voir / Réserve)
   const carte = $("dec-carte");
   const fin = statut === "fini" ? "translateX(130%) rotate(12deg)" : statut === "rejet" ? "translateX(-130%) rotate(-12deg)" : "translateY(-40%) scale(.7)";
   const suite = () => {
-    dec.i++; dec.vaOuvert = false; dec.va = null;
+    dec.i++; dec.vaOuvert = false; dec.va = null; dec.affOuvert = false;
     majTri();
     animer($("dec-carte"), [{ opacity: 0, transform: "scale(.92)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: DOUX });
   };
@@ -2166,6 +2216,14 @@ document.addEventListener("click", e => {
     if (d.action === "dec-encore") { tri.etape = "choix"; majTri(); return; }
     if (d.dec) { actionDec(d.dec); return; }
     if (d.action === "dec-va") { basculerVaDec(); return; }
+    // Affiche de la carte : enlever / choisir une autre
+    if (d.action === "dec-aff-suppr") { changerAffDec(""); return; }
+    if (d.action === "dec-aff-modif") { ouvrirAffDec(); return; }
+    if (d.action === "dec-aff-fermer") { dec.affOuvert = false; majCarteDec(); return; }
+    if (d.decAff !== undefined) { const u = dec.affiches.get(cleFilm(filmDec() || {}))?.[+d.decAff]; if (u) changerAffDec(u); return; }
+    if (d.action === "dec-aff-google") { const f = filmDec(); if (f) ouvrirGoogleImages({ type: "film", titre: f.titre, annee: f.annee }); return; }
+    if (d.action === "dec-aff-coller") { collerAffDec(); return; }
+    if (d.action === "dec-aff-url") { const u = lienValide($("dec-url")?.value); if (u) changerAffDec(u); else afficherToast("Adresse d'image invalide"); return; }
     if (d.decVaOnglet) { dec.vaOnglet = d.decVaOnglet; majVaDec(); return; }
     if (d.statut && d.decVaRes !== undefined) { const r = dec?.va?.[dec.vaOnglet]?.[+d.decVaRes]; if (r) ajouterAvecStatut(r, "film", d.statut, el); return; }
     if (d.action === "tri-go") { tri.ids = candidatsTri().map(x => x.id); tri.i = 0; tri.faites = 0; tri.etape = "cartes"; majTri(); return; }
