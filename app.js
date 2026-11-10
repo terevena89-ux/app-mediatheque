@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.9.0";
+const VERSION = "v0.9.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -1527,7 +1527,10 @@ function majTri() {
 }
 function blocTri(c, m) {
   if (c === "note") return `<div class="tri-bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
-    <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>`;
+    <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button>
+    <button class="pastille-rev tri-rev ${m.revoir ? "on" : ""}" data-action="tri-revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${MOTS[m.type].revoir}</button></span></div>
+    <div class="tri-bloc col"><span class="k">Avis</span>
+      <textarea class="avis tri-avis" data-tri-avis rows="2" placeholder="Mon avis…" aria-label="Mon avis">${echapper(m.avis)}</textarea></div>`;
   if (c === "date") return `<div class="tri-bloc col"><span class="k">${MOTS[m.type].passage}${m.passages.length ? ` : ${m.passages.map(x => echapper(texteDate(x))).join(", ")}` : ""}</span>
       ${periodeHTML(tri.per || (tri.per = etatPeriode()), "tri", "Ajouter")}</div>`;
   if (c === "affiche") return `<div class="tri-bloc col"><span class="k">Affiche</span><div class="tri-affs" id="tri-affs">${affichesTriHTML(m)}</div>
@@ -2238,6 +2241,8 @@ document.addEventListener("click", e => {
     if (mt) {
       if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); return; }
       if (d.action === "tri-coeur") { majFicheTri(mt, x => { x.coeur = !x.coeur; }); return; }
+      // « À revoir / À rejouer / À relire » (pour un jeu, enlève « Infini »)
+      if (d.action === "tri-revoir") { majFicheTri(mt, x => { x.revoir = !x.revoir; if (x.revoir) x.infini = false; }); return; }
       if (d.triAff !== undefined) { const u = tri.affiches.get(mt.id)?.[+d.triAff]; if (u) { appliquerAffiche(mt, { image: u }, false); majFicheTri(mt, () => {}); } return; }
       if (d.action === "tri-google") { ouvrirGoogleImages(mt); return; }
       if (d.action === "tri-coller") { collerAffiche(mt, false, $("tri-lien")).then(() => { if (mt.image) majFicheTri(mt, () => {}); }); return; }
@@ -2360,6 +2365,16 @@ document.addEventListener("input", e => {
   const t = e.target;
   // Cases De / À d'une période : on garde la saisie (pour ne rien perdre si le formulaire est redessiné)
   if (t.dataset.perChamp) { const s = etatPer(t.dataset.ou); if (s) s[t.dataset.perChamp].v = t.value; return; }
+  // Mode Trier : l'avis est gardé tout de suite (sans redessiner la carte), enregistré après une petite pause
+  if (t.dataset.triAvis !== undefined) {
+    const mt = ficheTri(); if (!mt) return;
+    const id = mt.id, texte = t.value;
+    mt.avis = texte;
+    clearTimeout(minuteurAvis);
+    // (on relit la fiche à ce moment-là : une note donnée entre-temps n'est pas écrasée)
+    minuteurAvis = setTimeout(() => { const x = medias.get(id); if (x) { x.avis = texte; ecrireMedia(x); rendreContenu(); } }, 600);
+    return;
+  }
   if (t.id === "recherche-pc" || t.id === "recherche-tel") { ui.recherche = t.value; rendreContenu(); return; }
   // Curseurs Texte / Jaquettes (PC) : l'écran change pendant qu'on fait glisser
   if (t.dataset.curseur) {

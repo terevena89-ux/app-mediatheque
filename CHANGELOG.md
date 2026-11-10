@@ -1,5 +1,8 @@
 # Médiathèque — journal des nouveautés
 
+## v0.9.1 — 2026-11-10
+- Mode Trier (Compléter) › Note : bouton « À revoir / À rejouer / À relire » à côté des étoiles, et une case « Avis » juste dessous (enregistrée toute seule).
+
 ## v0.9.0 — 2026-11-10
 - Découvrir : nouvelle catégorie « Films populaires 1970+ (US et France) » — environ 1 000 grands succès et films très connus, américains et français, sortis depuis 1970 (choisis à la main d'après les succès en salle).
 - Découvrir : les cartes passent dans l'ordre alphabétique (au lieu du hasard).
