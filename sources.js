@@ -324,6 +324,36 @@ async function resultatsDe(pages, type, signal) {
   return completerSeries(res, type, signal);
 }
 
+// ---------- Date de sortie (bouton « À sa sortie ») ----------
+// Renvoie le mois de sortie "AAAA-MM" (ou l'année "AAAA" si le mois est inconnu, "" si rien).
+// Films et jeux : Wikidata (P577), en préférant la sortie en France (qualificatif P291 = France),
+// sinon la plus ancienne. Séries : 1er épisode (TVmaze). Livres : l'année seulement.
+export async function dateDeSortie(type, titre, annee, signal) {
+  const enMois = (t, precision) => {
+    const m = /^\+?(\d{4})-(\d{2})/.exec(t || "");
+    if (!m) return "";
+    return precision >= 10 && m[2] !== "00" ? `${m[1]}-${m[2]}` : m[1];
+  };
+  try {
+    if (type === "serie") {
+      const s = await lireJSON(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(titre)}`, signal);
+      return (s?.premiered || "").slice(0, 7) || (annee ? String(annee) : "");
+    }
+    if (type === "livre") return annee ? String(annee) : "";
+    const pages = exactDabord(duBonType(await pagesWiki(`${titre} ${annee || ""} ${MOT_CLE[type]}`, signal, 6), type), titre);
+    const q = pages[0]?.pageprops?.wikibase_item;
+    if (!q) return annee ? String(annee) : "";
+    const e = (await entites([q], "claims", signal))[q];
+    const dates = (e?.claims?.P577 || []).map(c => ({
+      v: c.mainsnak?.datavalue?.value,
+      france: (c.qualifiers?.P291 || []).some(x => x.datavalue?.value?.id === "Q142")
+    })).filter(d => d.v?.time);
+    if (!dates.length) return annee ? String(annee) : "";
+    const choisie = dates.find(d => d.france) || dates.sort((a, b) => a.v.time.localeCompare(b.v.time))[0];
+    return enMois(choisie.v.time, choisie.v.precision) || (annee ? String(annee) : "");
+  } catch (e) { return annee ? String(annee) : ""; }
+}
+
 // ---------- « Voir aussi » ----------
 // proches  : pages Wikipédia « similaires » (fonction morelike de Wikipédia)
 // createur : autres œuvres du même réalisateur / studio / auteur / chaîne

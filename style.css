@@ -186,23 +186,10 @@ body.pc .onglets { display: none; }
 .og { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
 .og.on { color: var(--acc); font-weight: 700; }
 .oind { position: absolute; top: 0; bottom: 0; z-index: 0; transition: left .45s var(--ressort), width .45s var(--ressort), opacity .2s; }
-/* T1 cases */
-[data-onglets="t1"] .onglets { background: var(--sunk); box-shadow: 0 -1px 0 var(--line); }
-[data-onglets="t1"] .og + .og { border-left: 1px solid var(--line); }
-[data-onglets="t1"] .oind { background: var(--bg); box-shadow: inset 0 2.5px 0 var(--acc); bottom: env(safe-area-inset-bottom); }
-/* T2 bloc segmenté */
-[data-onglets="t2"] .onglets { margin: 2px 10px calc(10px + env(safe-area-inset-bottom)); height: 56px; padding: 4px; border-radius: 14px; background: var(--sunk); box-shadow: inset 0 1px 2px rgba(var(--oc), .07); }
-[data-onglets="t2"] .oind { top: 4px; bottom: 4px; border-radius: 10px; background: var(--surface); box-shadow: var(--ob); }
-[data-onglets="t2"] .og { font-size: 10.5px; }
-/* T3 classeur */
-[data-onglets="t3"] .onglets { background: var(--sunk); box-shadow: inset 0 1px 0 var(--line); }
-[data-onglets="t3"] .oind { top: 0; bottom: calc(7px + env(safe-area-inset-bottom)); background: var(--bg); border-radius: 0 0 12px 12px; box-shadow: 0 2px 3px rgba(var(--oc), .10); }
-[data-onglets="t3"] .og { padding-bottom: 6px; }
-/* T4 tuiles */
-[data-onglets="t4"] .onglets { gap: 6px; padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); height: calc(64px + env(safe-area-inset-bottom)); box-shadow: 0 -1px 0 var(--line); }
-[data-onglets="t4"] .og { border-radius: 10px; background: var(--sunk); }
-[data-onglets="t4"] .og.on { background: transparent; color: var(--acc-ink); }
-[data-onglets="t4"] .oind { top: 6px; bottom: calc(8px + env(safe-area-inset-bottom)); border-radius: 10px; background: var(--acc); box-shadow: var(--ob); }
+/* Onglets du bas : « bloc segmenté » (les styles Cases, Classeur et Tuiles ont été retirés en v0.9.2) */
+.onglets { margin: 2px 10px calc(10px + env(safe-area-inset-bottom)); height: 56px; padding: 4px; border-radius: 14px; background: var(--sunk); box-shadow: inset 0 1px 2px rgba(var(--oc), .07); }
+.oind { top: 4px; bottom: 4px; border-radius: 10px; background: var(--surface); box-shadow: var(--ob); }
+.og { font-size: 10.5px; }
 
 /* =========================================================
    PC
@@ -739,3 +726,88 @@ body.pc .pastille-st { height: 40px; font-size: 13.5px; }
 .tri-bloc .v.note { gap: 4px; flex-wrap: nowrap; }
 .tri-rev { margin-left: auto; height: 30px; padding: 0 8px; gap: 4px; font-size: 11.5px; }
 .tri-avis { margin-top: 0; min-height: 56px; }
+/* Formulaire de date : raccourcis (À sa sortie, Vu aujourd'hui, Commencé aujourd'hui, Enfance) */
+.per-rapides { display: flex; flex-wrap: wrap; gap: 5px; }
+.per-rap { height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--line)); color: var(--acc); font-size: 12px; font-weight: 500;
+  background: var(--acc-soft); white-space: nowrap; transition: transform .38s var(--ressort), opacity .2s; }
+.per-rap:active { transform: scale(.92); transition-duration: .08s; }
+.per-rap:disabled { opacity: .6; }
+
+/* =========================================================
+   v0.9.3 : étapes dans les listes, zoom, barre de défilement rapide
+   ========================================================= */
+/* Titre d'étape (selon le tri : ★★★★★, 2019, M, mois d'ajout…) */
+.etape { font-size: 11.5px; font-weight: 700; color: var(--acc); padding: 12px 0 3px; letter-spacing: .03em; border-bottom: 1px solid color-mix(in srgb, var(--acc) 25%, transparent); }
+.mosa .etape { grid-column: 1 / -1; }
+body.pc .etape { padding: 12px 8px 3px; }
+/* Liste : 0 grande, 1 normale, 2 petite, 3 deux colonnes */
+.liste:not(.compacte).z0 .it { padding: 9px 0; gap: 14px; }
+.liste:not(.compacte).z0 .it .vg { width: 50px; height: 75px; }
+.liste:not(.compacte).z0 .it::after { left: 64px; }
+.liste:not(.compacte).z0 .it-ti { font-size: 16px; }
+.liste:not(.compacte).z2 .it { padding: 4px 0; gap: 10px; }
+.liste:not(.compacte).z2 .it .vg { width: 26px; height: 39px; }
+.liste:not(.compacte).z2 .it::after { left: 36px; }
+.liste:not(.compacte).z2 .it-ti { font-size: 14px; }
+.compacte.z0 .it .vg { width: 32px; height: 48px; }
+.compacte.z0 .it::after { left: 42px; }
+.compacte.z2 .it { padding: 2px 0; }
+.compacte.z2 .it .vg { width: 18px; height: 27px; }
+.compacte.z2 .it::after { left: 28px; }
+.liste.z3 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
+.liste.z3 .sec, .liste.z3 .etape { grid-column: 1 / -1; }
+.liste.z3 .it { padding: 4px 0; gap: 8px; }
+.liste.z3 .it .vg { width: 24px; height: 36px; }
+.liste.z3 .it::after { left: 32px; }
+.liste.z3 .it-txt { flex-direction: column; align-items: stretch; gap: 0; }
+.liste.z3 .it-ti { font-size: 12.5px; }
+.liste.z3 .it-me { font-size: 10.5px; margin: 0; }
+.liste.z3 .rev, .liste.z3 .it-rt .etoiles { display: none; }
+/* PC : les mêmes niveaux agrandissent ou réduisent les jaquettes */
+body.pc .liste { --jz: 1; }
+body.pc .liste.z0 { --jz: 1.4; }
+body.pc .liste.z2 { --jz: .75; }
+body.pc .liste.z3 { --jz: .75; }
+body.pc .liste .it { height: max(32px, calc(39px * var(--jq, 1) * var(--jz) + 6px)); padding: 0 8px; }
+body.pc .liste .it .vg { width: calc(26px * var(--jq, 1) * var(--jz)); height: calc(39px * var(--jq, 1) * var(--jz)); }
+body.pc .liste.compacte .it { height: max(28px, calc(27px * var(--jq, 1) * var(--jz) + 5px)); }
+body.pc .liste.compacte .it .vg { width: calc(18px * var(--jq, 1) * var(--jz)); height: calc(27px * var(--jq, 1) * var(--jz)); }
+/* Mosaïque : nombre de colonnes réglé en pinçant */
+.mosa { grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); }
+.mosa[data-cols="2"] .mc-ti, .mosa[data-cols="3"] .mc-ti { font-size: 13px; }
+.mosa[data-cols="2"] .mc .vg b, .mosa[data-cols="3"] .mc .vg b { font-size: 32px; }
+.mosa[data-cols="5"] { gap: 10px 6px; }
+.mosa[data-cols="5"] .mc-ti { font-size: 10.5px; }
+.mosa[data-cols="6"] { gap: 8px 5px; }
+.mosa[data-cols="6"] .mc-ti { font-size: 9.5px; min-height: 0; -webkit-line-clamp: 1; }
+.mosa[data-cols="6"] .mc .etoiles { display: none; }
+body.pc .mosa { grid-template-columns: repeat(auto-fill, minmax(calc(108px * var(--jq, 1) * 4 / var(--cols, 4)), 1fr)); }
+/* Barre de défilement rapide (téléphone) */
+.defil { position: absolute; z-index: 5; right: 0; top: 8px; bottom: 90px; width: 28px; opacity: 0; pointer-events: none; transition: opacity .3s; touch-action: none; }
+.defil.actif { opacity: 1; pointer-events: auto; }
+.defil::before { content: ""; position: absolute; right: 5px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.defil-poignee { position: absolute; right: 2px; top: 0; width: 9px; height: 46px; border-radius: 5px; background: var(--acc); box-shadow: var(--ob); transition: width .2s, right .2s; }
+.defil.prise .defil-poignee { width: 12px; right: 1px; }
+.defil-bulle { position: absolute; right: 30px; transform: translateY(-50%); min-width: 44px; padding: 7px 12px; border-radius: 18px; background: var(--acc); color: var(--acc-ink);
+  font-weight: 700; font-size: 15px; white-space: nowrap; text-align: center; box-shadow: 0 6px 18px rgba(var(--oc), .25); opacity: 0; transition: opacity .15s; pointer-events: none; }
+.defil.prise .defil-bulle:not([hidden]) { opacity: 1; }
+
+/* =========================================================
+   v0.9.4 : tri plus agréable
+   ========================================================= */
+/* Le haut de la carte (affiche + titre) ouvre la fiche */
+button.tri-tete { width: 100%; text-align: left; border-radius: 8px; transition: background-color .2s, transform .38s var(--ressort); }
+button.tri-tete:active { background: var(--hover); transform: scale(.985); transition-duration: .08s; }
+.tri-tete .fi-tt { flex: 1; min-width: 0; display: block; }
+.tri-tete .fi-me { display: block; }
+.tri-ouvrir { align-self: center; color: var(--faint); }
+/* « Enregistré » à côté de « Avis » */
+.tri-ok { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--st-fini); }
+.tri-ok .ic { width: 13px; height: 13px; stroke-width: 2.4; stroke-dasharray: 24; }
+/* Éclats autour de la dernière étoile */
+.eclat { position: fixed; z-index: 70; width: 6px; height: 6px; border-radius: 50%; background: var(--star); pointer-events: none; box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
+.eclat:nth-child(odd) { background: var(--acc); }
+/* Découvrir : bouton Retour */
+.dec-rond.retour { width: 44px; height: 44px; color: var(--muted); }
+.dec-rond.retour .ic { width: 15px; height: 15px; transform: scaleX(-1); }
+.dec-rond:disabled { opacity: .35; }

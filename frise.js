@@ -24,6 +24,7 @@ const etoiles = n => n ? `<span class="etoiles">${"★".repeat(n)}<i>${"★".rep
 
 // Petit texte de date d'un événement : « 12 mars », « mars », « oct. → déc. », « dans l'année »
 function quand(e) {
+  if (e.enfance) return "";
   if (e.libelle) return e.libelle;
   if (e.precision === "annee") return "dans l'année";
   if (e.precision === "jour") return `${e.jour} ${MOIS[e.mois % 12]}`;
@@ -35,7 +36,7 @@ const encore = e => e.fois > 1 ? ` · ${e.fois}e fois` : "";
 function ligne(evs) {
   let an = null, cote = 0, h = "";
   evs.forEach(e => {
-    const a = Math.floor(e.mois / 12);
+    const a = e.enfance ? "Enfance" : Math.floor(e.mois / 12);
     if (a !== an) { an = a; h += `<div class="fl-an"><b>${a}</b></div>`; }
     h += `<button class="fl-ev ${cote++ % 2 ? "d" : ""}" data-fiche="${e.id}" style="--tc:${COULEURS_TYPES[e.type]}">
       <span class="fl-txt"><span class="fl-quand">${echapper(quand(e))}${encore(e)}</span>
@@ -47,13 +48,18 @@ function ligne(evs) {
 // ---------- 2. Frise horizontale ----------
 function horizontale(evs, larg) {
   const maintenant = new Date(), moisNow = maintenant.getFullYear() * 12 + maintenant.getMonth();
-  const tous = evs.flatMap(e => [e.mois, e.debut ?? e.mois]);
-  const debut = Math.min(...tous, moisNow) - 1, fin = Math.max(...tous, moisNow) + 1;
+  // « Enfance » (sans date) : une colonne à part, tout à gauche, avant le premier vrai mois
+  const datees = evs.filter(e => !e.enfance), enfance = evs.length > datees.length;
+  const tous = datees.flatMap(e => [e.mois, e.debut ?? e.mois]);
+  const debut = Math.min(...tous, moisNow) - (enfance ? 3 : 1), fin = Math.max(...tous, moisNow) + 1;
+  const colEnfance = debut + 1;
+  evs = evs.map(e => e.enfance ? { ...e, mois: colEnfance, debut: null } : e);
   const W = larg;                                          // largeur d'un mois en pixels
   const X = m => (m - debut) * W + W / 2;
   let axe = "", grille = "";
   for (let m = debut; m <= fin; m++) {
     const janvier = m % 12 === 0;
+    if (enfance && m < colEnfance + 2) { if (m === colEnfance) axe += `<span class="fh-m an" style="left:${X(m)}px">Enfance</span>`; continue; }
     axe += `<span class="fh-m ${janvier ? "an" : ""}" style="left:${X(m)}px">${janvier ? Math.floor(m / 12) : MOIS[m % 12]}</span>`;
     grille += `<i class="fh-g ${janvier ? "an" : ""}" style="left:${(m - debut) * W}px"></i>`;
   }
@@ -89,10 +95,10 @@ function mur(evs) {
   // Groupes : un par mois de fin (ou « dans l'année » quand la date est floue)
   const groupes = [];
   evs.forEach(e => {
-    const a = Math.floor(e.mois / 12);
-    const cle = e.precision === "annee" ? `${a}-annee` : `${e.mois}`;
+    const a = e.enfance ? "Enfance" : Math.floor(e.mois / 12);
+    const cle = e.enfance ? "enfance" : e.precision === "annee" ? `${a}-annee` : `${e.mois}`;
     let g = groupes.find(x => x.cle === cle);
-    if (!g) groupes.push(g = { cle, an: a, nom: e.precision === "annee" ? "année" : MOIS[e.mois % 12], evs: [] });
+    if (!g) groupes.push(g = { cle, an: a, nom: e.enfance ? "" : e.precision === "annee" ? "année" : MOIS[e.mois % 12], evs: [] });
     g.evs.push(e);
   });
   let an = null, h = "";

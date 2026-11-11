@@ -1,5 +1,31 @@
 # Médiathèque — journal des nouveautés
 
+## v0.9.4 — 2026-11-11
+- Tri plus agréable :
+  - vibrations différentes selon le choix (Vu, Pas intéressé, À voir, Réserve), une petite quand la carte a assez glissé ;
+  - étoiles qui s'allument en vague, avec une vibration par étoile et des éclats ;
+  - avis : petite coche « Enregistré » quand il est sauvé.
+- Trier › Compléter : un seul type de média à la fois (toucher « Jeux » garde seulement les jeux).
+- Trier › Compléter : toucher l'affiche ou le titre ouvre la fiche ; en la fermant, on revient à la même carte.
+- Découvrir : bouton « Retour » toujours là ; il annule le dernier choix et fait revenir la carte, autant de fois qu'on veut (aussi depuis l'écran de fin).
+
+## v0.9.3 — 2026-11-11
+- Zoom des listes en pinçant à deux doigts (sur PC : Ctrl + molette) :
+  - Liste et Compacte : grande / normale / petite / deux colonnes ;
+  - Mosaïque : de 2 à 6 colonnes.
+  Le niveau est gardé pour chaque type (sur chaque appareil).
+- Les listes sont coupées en étapes selon le tri : par note (★★★★★…), par année, par lettre (titre), par année de visionnage (dernier vu), par mois d'ajout.
+- Téléphone : barre de défilement rapide à droite (apparaît quand on fait défiler une longue liste) ; on attrape la poignée et une bulle montre l'étape (★★★★, 2019, M…).
+
+## v0.9.2 — 2026-11-11
+- Films : plus de statut « En cours » (2 pages : À voir, Vus). Les films qui étaient en cours passent en « Vu », leur date de début devient la date de visionnage.
+- Dates : raccourcis « À sa sortie » (cherche le mois de sortie en France, sinon la 1re sortie ; remplit la case, à ajuster), « Vu aujourd'hui » et « Commencé aujourd'hui » (remplissent les cases ; « Commencé » passe le titre en cours, pas pour les films), « Enfance » (ajouté tout de suite).
+- Frise : bloc « Enfance » tout au début (avant les années).
+- Google Images s'ouvre dans le navigateur principal du téléphone (plus dans une fenêtre de l'appli).
+- Réglages : « Trier mes fiches » remonté tout en haut (section « À trier »).
+- Icônes : engrenage pour les Réglages, pendule qui remonte le temps pour la Frise.
+- Onglets du bas : seulement le style « Bloc ». Retirés (pour mémoire) : « Cases » (T1), « Classeur » (T3), « Tuiles » (T4).
+
 ## v0.9.1 — 2026-11-10
 - Mode Trier (Compléter) › Note : bouton « À revoir / À rejouer / À relire » à côté des étoiles, et une case « Avis » juste dessous (enregistrée toute seule).
 

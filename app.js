@@ -24,14 +24,14 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lireFeuille } from "./excel-style.js";
-import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier } from "./sources.js";
+import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier, dateDeSortie } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
 import { genererDonneesTest } from "./test.js";
 import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.9.1";
+const VERSION = "v0.9.4";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -63,6 +63,11 @@ const PAGES = [
 const nomPage = (i, type) => i === 0 ? MOTS[type].avoir : i === 1 ? "En cours" : MOTS[type].vus;
 const couleurPage = i => `var(--st-${["avoir", "encours", "fini"][i]})`;
 const pageDuStatut = s => s === "encours" ? 1 : (s === "fini" || s === "abandon") ? 2 : 0;
+// Les films n'ont pas de statut « En cours » (un film se regarde d'une traite) : 2 pages seulement.
+// Les numéros de page restent 0 (À voir), 1 (En cours), 2 (Vus) ; « pagesDe » dit lesquelles existent.
+const pagesDe = type => type === "film" ? [0, 2] : [0, 1, 2];
+const statutsDe = type => type === "film" ? STATUTS.filter(s => s !== "encours") : STATUTS;
+const pageValide = () => { if (!pagesDe(ui.type).includes(ui.page)) ui.page = 0; };
 
 const TRIS = [
   { id: "ajout", nom: "Ajout récent" }, { id: "titre", nom: "Titre" }, { id: "annee", nom: "Année" },
@@ -115,10 +120,21 @@ function animer(el, images, options) {
   try { return el.animate(images, options); } catch (e) { return null; }
 }
 const DOUX = "cubic-bezier(.22,.9,.25,1)", RESSORT = "cubic-bezier(.3,1.5,.5,1)";
-// Petite vibration (téléphone Android) quand on change de page ou de catégorie
-function vibrer() {
+// Petite vibration (téléphone Android) quand on change de page ou de catégorie.
+// Dans le tri, chaque choix a sa propre vibration (on « sent » ce qu'on a fait sans regarder) :
+const VIBRATIONS = {
+  pas: 8,                // changer de page, d'onglet…
+  etoile: 7,             // chaque étoile qui s'allume
+  vu: [14, 50, 22],      // double tape franche : « Vu »
+  non: 34,               // une seule, plus longue : « Pas intéressé »
+  avoir: [10, 40, 10],   // deux petites : « À voir »
+  reserve: [6, 30, 6, 30, 6],   // trois légères : « En réserve »
+  seuil: 5,              // la carte a assez glissé pour choisir
+  enregistre: [6, 60, 12]       // avis enregistré
+};
+function vibrer(sorte = "pas") {
   if (reglages.vibrations === "non" || !estTel()) return;
-  try { navigator.vibrate && navigator.vibrate(8); } catch (e) { /* pas de vibreur */ }
+  try { navigator.vibrate && navigator.vibrate(VIBRATIONS[sorte] ?? sorte); } catch (e) { /* pas de vibreur */ }
 }
 
 // ---------- Dates souples et périodes ----------
@@ -145,8 +161,11 @@ function lireBout(s) {
 }
 // Lit un passage. Pour une période, les infos (mois, jour, précision) sont celles de la FIN
 // (c'est là qu'on l'a fini) ; « debut » = numéro du mois de début ; « ouvert » = pas encore fini.
+// « enfance » = vu quand j'étais petit, sans date précise : rangé tout au début de la frise (avant 2012)
+const ENFANCE = "enfance";
 function lireDate(s) {
   s = String(s || "");
+  if (s === ENFANCE) return { precision: "enfance", enfance: true, an: null, mois: 0, jour: 0 };
   if (!s.includes("/")) return lireBout(s);
   const [x, y] = s.split("/"), de = lireBout(x), fin = y ? lireBout(y) : null;
   if (!de || (y && !fin)) return null;
@@ -169,6 +188,7 @@ function texteBout(d, court, avecAn = true) {
 function texteDate(s, court = false) {
   const d = lireDate(s);
   if (!d) return "";
+  if (d.enfance) return "Enfance";
   if (!d.periode) return texteBout(d, court);
   if (d.ouvert) return `depuis ${texteBout(d.de, court)}`;
   // Même année des deux côtés : l'année n'est écrite qu'une fois, à la fin
@@ -232,12 +252,14 @@ function normaliser(id, d) {
     // true = j'ai choisi / modifié / enlevé l'affiche moi-même (sinon : affiche trouvée automatiquement).
     // Rien d'affiché pour l'instant : servira à passer en revue les affiches automatiques.
     afficheChoisie: !!d.afficheChoisie,
-    statut: STATUTS.includes(d.statut) ? d.statut : "avoir",
+    // (v0.9.2 : un film « En cours » passe en « Vu » ; sa période « depuis … » devient sa date de visionnage)
+    statut: STATUTS.includes(d.statut) ? (d.type === "film" && d.statut === "encours" ? "fini" : d.statut) : "avoir",
     revoir: !!d.revoir,
     infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
     coeur: !!d.coeur,
-    passages: fusionnerDebut(liste(d.passages).map(migrerDate).filter(dateValide), lireBout(String(d.debut || "")) ? d.debut : "", d.statut),
+    passages: fusionnerDebut(liste(d.passages).map(migrerDate).map(p => d.type === "film" && p.endsWith("/") ? p.slice(0, -1) : p).filter(dateValide),
+      lireBout(String(d.debut || "")) ? d.debut : "", d.type === "film" && d.statut === "encours" ? "fini" : d.statut),
     support: String(d.support || "").trim(),
     tags: liste(d.tags),
     avis: String(d.avis || ""),
@@ -612,6 +634,27 @@ function carteHTML(m, pale) {
     ${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${(m.type === "jeu" && m.infini) ? `<span class="mc-rev">∞</span>` : m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}
     <span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
 }
+// « Étape » d'une fiche selon le tri choisi : les listes sont coupées en paquets (★★★★★, 2019, M…)
+// et la barre de défilement rapide montre l'étape où l'on arrive.
+function etapeDe(m, tri) {
+  if (tri === "note") return m.note ? "★".repeat(m.note) : "Sans note";
+  if (tri === "annee") return m.annee ? String(m.annee) : "Sans année";
+  if (tri === "titre") { const c = simplifier(m.titre).charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; }
+  if (tri === "vu") {
+    const d = lireDate(dernierPassage(m));
+    return !d ? "Pas de date" : d.enfance ? "Enfance" : String(Math.floor(d.mois / 12));
+  }
+  if (!m.cree) return "Plus ancien";
+  const d = new Date(m.cree);
+  return `${NOMS_MOIS[d.getMonth()]} ${d.getFullYear()}`;
+}
+// Une liste avec ses titres d'étapes (seulement s'il y a au moins 2 étapes différentes)
+function avecEtapes(liste, dessiner) {
+  const tri = reglages.tris[ui.type] || "ajout";
+  const etapes = liste.map(m => etapeDe(m, tri));
+  const plusieurs = new Set(etapes).size > 1;
+  return liste.map((m, k) => (plusieurs && etapes[k] !== etapes[k - 1] ? `<div class="etape">${echapper(etapes[k])}</div>` : "") + dessiner(m)).join("");
+}
 function pageHTML(i) {
   // (les catégories affichées et « Tout mélangé » se choisissent dans le menu Tags)
   const { sections } = contenuPage(i);
@@ -622,9 +665,33 @@ function pageHTML(i) {
   // Titre de section : seulement s'il y a plusieurs sections (ou pour « Abandonnés »)
   const titre = (s, k) => s.titre && (sections.length > 1 || i !== 0) && !(i === 2 && k === 0) ? `<div class="sec">${echapper(s.titre)}</div>` : "";
   if (vue === "mosa") {
-    return `<div class="mosa">${sections.map((s, k) => titre(s, k) + s.liste.map(m => carteHTML(m, estPale(m))).join("")).join("")}</div>`;
+    const cols = zoomDe("mosa");
+    return `<div class="mosa" style="--cols:${cols}" data-cols="${cols}">${sections.map((s, k) => titre(s, k) + avecEtapes(s.liste, m => carteHTML(m, estPale(m)))).join("")}</div>`;
   }
-  return `<div class="liste ${vue === "compact" ? "compacte" : ""}">${sections.map((s, k) => titre(s, k) + s.liste.map(m => ligneHTML(m, estPale(m))).join("")).join("")}</div>`;
+  return `<div class="liste ${vue === "compact" ? "compacte" : ""} z${zoomDe(vue)}">${sections.map((s, k) => titre(s, k) + avecEtapes(s.liste, m => ligneHTML(m, estPale(m)))).join("")}</div>`;
+}
+
+// ---------- Zoom des listes (pincer à deux doigts ; sur PC : Ctrl + molette) ----------
+// Liste et Compacte : 4 niveaux (0 grande, 1 normale, 2 petite, 3 deux colonnes).
+// Mosaïque : nombre de colonnes, de 2 (gros) à 6 (petit). Gardé par type et par appareil.
+function zoomDe(vue) {
+  const z = reglages.zooms?.[`${ui.type}-${vue === "mosa" ? "mosa" : "liste"}`];
+  return vue === "mosa" ? (z >= 2 && z <= 6 ? z : 4) : (z >= 0 && z <= 3 ? z : 1);
+}
+// sens +1 = zoomer (plus gros), -1 = dézoomer (plus petit, plus de titres à l'écran)
+function changerZoom(sens) {
+  const vue = vueActuelle();
+  if (vue === "tab" || adresse.frise) return;
+  const mosa = vue === "mosa", z = zoomDe(vue);
+  const n = mosa ? Math.max(2, Math.min(6, z - sens)) : Math.max(0, Math.min(3, z - sens));
+  if (n === z) return;
+  changerReglage("zooms", { ...(reglages.zooms || {}), [`${ui.type}-${mosa ? "mosa" : "liste"}`]: n });
+  // On garde à peu près l'endroit où l'on était dans la liste
+  const p = pageAffichee(), ratio = p ? p.scrollTop / Math.max(1, p.scrollHeight - p.clientHeight) : 0;
+  rendreContenu();
+  const p2 = pageAffichee();
+  if (p2) { p2.scrollTop = ratio * (p2.scrollHeight - p2.clientHeight); animer(p2.firstElementChild, [{ transform: `scale(${sens > 0 ? .96 : 1.04})`, opacity: .6 }, { transform: "none", opacity: 1 }], { duration: 220, easing: DOUX }); }
+  vibrer();
 }
 
 // --- Barre de gauche (PC) ---
@@ -644,7 +711,10 @@ function rendreCote() {
 }
 
 // --- En-tête ---
+// La page affichée (élément HTML) dans la piste
+const pageAffichee = () => document.querySelector(`#piste .page[data-page-num="${ui.page}"]`);
 function rendreEntete() {
+  pageValide();
   const t = typeDe(ui.type);
   if (adresse.frise) {
     const seg = `<div class="seg frise-choix">${FRISES.map(f => `<button data-frise="${f.id}" aria-pressed="${reglages.frise === f.id}">${f.nom}</button>`).join("")}</div>`;
@@ -656,7 +726,7 @@ function rendreEntete() {
   if (estPC()) {
     retenir(".statuts .sind");
     $("entete").innerHTML = `<div class="pc-tete"><h1>${t.nom}</h1>
-      <div class="statuts">${PAGES.map((p, i) => `<button class="st ${i === ui.page ? "on" : ""}" data-page="${i}" style="--c:${couleurPage(i)}">${ic(p.icone)}${nomPage(i, ui.type)}</button>`).join("")}<i class="sind"></i></div>
+      <div class="statuts">${pagesDe(ui.type).map(i => `<button class="st ${i === ui.page ? "on" : ""}" data-page="${i}" style="--c:${couleurPage(i)}">${ic(PAGES[i].icone)}${nomPage(i, ui.type)}</button>`).join("")}<i class="sind"></i></div>
       <span class="sp"></span><button class="btn pri" data-action="ajouter">${ic("plus", "s")}Ajouter</button></div>`;
     poserTraitStatut();
   } else {
@@ -665,7 +735,7 @@ function rendreEntete() {
       <button class="btn-icone" data-action="recherche" aria-label="Chercher">${ic("cherche")}</button>
       <button class="btn-icone" data-action="frise" aria-label="Frise">${ic("frise")}</button>
       <button class="btn-icone" data-aller="reglages" aria-label="Réglages">${ic("regl")}</button></div>
-      <div class="points">${PAGES.map((p, i) => `<i class="${i === ui.page ? "on" : ""}" data-page="${i}" style="--c:${couleurPage(i)}"></i>`).join("")}</div>`;
+      <div class="points">${pagesDe(ui.type).map(i => `<i class="${i === ui.page ? "on" : ""}" data-page="${i}" style="--c:${couleurPage(i)}"></i>`).join("")}</div>`;
   }
 }
 // Les « plaquettes » (trait sous le statut, pastille des vues, onglet du bas) glissent
@@ -713,10 +783,15 @@ function rendreContenu() {
   if (adresse.frise) { rendreFrise(); return; }
   if (vueActuelle() === "tab") { if (!tableauEnEdition) rendreTableau(); return; }
   // On garde la position de défilement de chaque page quand on redessine
-  const defil = [...document.querySelectorAll("#contenu .page")].map(p => p.scrollTop);
-  $("contenu").innerHTML = `<div class="piste" id="piste" style="transform:translateX(${-ui.page * 100 / 3}%)">${[0, 1, 2].map(i =>
-    `<div class="page" data-page-num="${i}">${pageHTML(i)}</div>`).join("")}</div>`;
-  document.querySelectorAll("#contenu .page").forEach((p, i) => { if (defil[i]) p.scrollTop = defil[i]; });
+  const defil = {};
+  document.querySelectorAll("#contenu .page").forEach(p => { defil[p.dataset.pageNum] = p.scrollTop; });
+  pageValide();
+  const vis = pagesDe(ui.type);
+  $("contenu").innerHTML = `<div class="piste" id="piste" style="width:${vis.length * 100}%;transform:translateX(${-vis.indexOf(ui.page) * 100 / vis.length}%)">${vis.map(i =>
+    `<div class="page" data-page-num="${i}" style="width:${100 / vis.length}%">${pageHTML(i)}</div>`).join("")}</div>
+    <div class="defil" id="defil" hidden><i class="defil-poignee"></i><span class="defil-bulle"></span></div>`;
+  document.querySelectorAll("#contenu .page").forEach(p => { if (defil[p.dataset.pageNum]) p.scrollTop = defil[p.dataset.pageNum]; });
+  majDefil();
 }
 
 // --- Onglets du bas (téléphone) ---
@@ -763,7 +838,7 @@ function evenementsFrise() {
     m.passages.forEach((p, k) => {
       const d = lireDate(p);
       if (!d || d.ouvert) return;   // pas encore fini : pas dans la frise
-      evs.push({ id: m.id, titre: m.titre, type: m.type, mois: d.mois, precision: d.precision, jour: d.jour,
+      evs.push({ id: m.id, titre: m.titre, type: m.type, enfance: !!d.enfance, mois: d.mois, precision: d.precision, jour: d.jour,
         libelle: d.periode ? texteDate(p, true).replace(/ \d{4}$/, "") : "", debut: d.periode ? d.debut : null, note: m.note, coeur: m.coeur, fois: k + 1, vignette: vignette(m, "fv"), tri: valeurDate(p) });
     });
   });
@@ -889,7 +964,13 @@ function periodeHTML(e, ou, texteOK) {
       const num = e.an * 12 + i, bout = num === mDe || num === mA, dans = mDe != null && mA != null && num > Math.min(mDe, mA) && num < Math.max(mDe, mA);
       return `<button data-per-mois="${e.an}-${deuxChiffres(i + 1)}" data-ou="${ou}" class="${bout ? "bout" : dans ? "dans" : ""} ${num > maintenant ? "futur" : ""}">${n}</button>`;
     }).join("")}</div></div>`;
+  // Raccourcis : « À sa sortie » et « Vu / Commencé aujourd'hui » remplissent les cases (on ajuste puis
+  // « Ajouter ») ; « Enfance » ajoute tout de suite. Pas de « Commencé » pour les films.
+  const m = mediaPer(ou);
+  const rapides = [["sortie", e.chargeSortie ? "Recherche…" : "À sa sortie"], ["aujourdhui", `${MOTS[m?.type || "film"].fini} aujourd'hui`],
+    ...(m?.type === "film" ? [] : [["commence", "Commencé aujourd'hui"]]), ["enfance", "Enfance"]];
   return `<div class="per" id="per-${ou}">
+    <div class="per-rapides">${rapides.map(([k, n]) => `<button class="per-rap" data-per-rapide="${k}" data-ou="${ou}" ${k === "sortie" && e.chargeSortie ? "disabled" : ""}>${n}</button>`).join("")}</div>
     <div class="per-saisons"><span class="per-mini">Saison</span>${Object.entries(SAISONS).map(([k, s]) => `<button class="per-sai ${saisonActive(k) ? "on" : ""}" data-per-saison="${k}" data-ou="${ou}">${s.nom}</button>`).join("")}</div>
     ${ligne("de")}${ligne("a")}${grille}
     <div class="per-bas"><button class="per-lien ${e.grille ? "on" : ""}" data-per="grille" data-ou="${ou}">${ic("calendrier", "s")}Grille</button>
@@ -897,6 +978,7 @@ function periodeHTML(e, ou, texteOK) {
       <button class="btn pri" data-per="ok" data-ou="${ou}">${texteOK}</button></div></div>`;
 }
 const etatPer = ou => ou === "tri" ? tri?.per : ui.per;
+const mediaPer = ou => ou === "tri" ? ficheTri() : ficheOuverte();
 // Redessine seulement le formulaire (pas toute la fiche)
 // Fiche : redessine avec le formulaire ouvert, le fait apparaître en douceur et le rend visible
 function montrerFormPassage() {
@@ -933,11 +1015,28 @@ function clicPeriode(el, d) {
   else if (d.per === "an-" || d.per === "an+") e.an += d.per === "an-" ? -1 : 1;
   else if (d.per === "seule") { e.a = { p: e.a.p, v: "" }; e.clic = 0; }
   else if (d.per === "ok") { validerPeriode(ou); return; }
+  else if (d.perRapide === "enfance") { validerPeriode(ou, ENFANCE); return; }
+  else if (d.perRapide === "aujourdhui" || d.perRapide === "commence") {
+    e.de = { p: "jour", v: jourActuel() }; e.a = { p: "jour", v: "" }; e.ouvert = d.perRapide === "commence"; e.clic = 0;
+  }
+  else if (d.perRapide === "sortie") {
+    // Mois de sortie cherché en ligne (Wikidata / TVmaze) ; à défaut, l'année de la fiche
+    const m = mediaPer(ou);
+    if (!m) return;
+    e.chargeSortie = true;
+    dateDeSortie(m.type, m.titre, m.annee).then(v => {
+      e.chargeSortie = false;
+      if (v) { e.de = { p: v.length > 4 ? "mois" : "annee", v }; e.a = { p: e.de.p, v: "" }; e.ouvert = false; e.an = +v.slice(0, 4); }
+      else afficherToast("Date de sortie introuvable");
+      if (etatPer(ou) === e) majPeriode(ou);
+    });
+  }
   majPeriode(ou);
   vibrer();
 }
-function validerPeriode(ou) {
-  const e = etatPer(ou), date = lirePeriode(e);
+// date = valeur imposée (« Enfance ») ; sinon ce qui est saisi dans les cases
+function validerPeriode(ou, imposee = "") {
+  const e = etatPer(ou), date = imposee || lirePeriode(e);
   if (!date) { afficherToast("Date incomplète"); return; }
   if (ou === "tri") {
     const mt = ficheTri();
@@ -1037,7 +1136,18 @@ function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
 function ouvrirGoogleImages(m) {
   const mot = { film: "affiche", serie: "affiche", jeu: "jaquette", livre: "couverture" }[m.type];
   const q = [m.titre, m.annee, mot].filter(Boolean).join(" ");
-  window.open("https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(q), "_blank", "noopener");
+  ouvrirDansNavigateur("https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(q));
+}
+// Ouvre une adresse dans le navigateur principal du téléphone (pas dans une petite fenêtre au sein
+// de l'appli). Sur Android : un « intent » demande au système d'ouvrir le lien avec le navigateur
+// par défaut. Sur PC (ou si ça échoue) : nouvel onglet.
+function ouvrirDansNavigateur(url) {
+  if (/Android/i.test(navigator.userAgent)) {
+    const sans = url.replace(/^https:\/\//, "");
+    location.href = `intent://${sans}#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+    return;
+  }
+  window.open(url, "_blank", "noopener");
 }
 // « Coller » : lit l'adresse d'image copiée ; si le téléphone refuse, on montre la case pour la coller à la main
 async function collerAffiche(m, fermer, caseLien) {
@@ -1137,7 +1247,7 @@ const estRejete = (type, titre, annee) => donnees.rejetes.some(r => r.type === t
 const sansRejetes = (liste, type) => (liste || []).filter(r => !estRejete(type, r.titre, r.annee));
 function boutonsStatut(type, titre, attribut) {
   const m = dejaLa(type, titre);
-  return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.map(([s, i]) =>
+  return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.filter(([s]) => statutsDe(type).includes(s)).map(([s, i]) =>
     `<button ${attribut} data-statut="${s}" class="${m?.statut === s ? "on" : ""}" style="--c:var(--st-${s})" title="${nomStatut(s, type)}" aria-label="${nomStatut(s, type)}">${ic(i)}</button>`).join("")}</span>`;
 }
 function ajouterAvecStatut(infos, type, statut, bouton) {
@@ -1305,6 +1415,8 @@ function ouvrirReglages() {
   const nbTest = [...medias.values()].filter(m => m.test).length;
   ouvrirVoile("reglages", estPC() ? "centre" : "plein", `<div class="fenetre regl" role="dialog" aria-label="Réglages">
     <div class="fhd"><h2>Réglages</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
+    <div class="sect">À trier</div>
+    <div class="groupe"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter ou découvrir, une carte à la fois</small></span><span class="val">bêta${ic("droite")}</span></button></div>
     <div class="sect">Compte</div>
     <div class="groupe">
       <div class="reg"><span class="resume">${echapper(infoCompte)}</span><span class="synchro"></span></div>
@@ -1319,8 +1431,7 @@ function ouvrirReglages() {
         <button class="reg" data-action="largeurs"><span>Largeurs (barre, fiche, colonnes)</span><span class="val">Remettre</span></button>
         <div class="reg"><span>Police</span>${seg("police", [["plex", "IBM Plex Sans"], ["figtree", "Figtree"]], reglages.police)}</div>
         <div class="reg"><span>Fiche</span>${seg("fichePC", [["bandeau", "Bandeau"], ["flou", "Fond flou"], ["simple", "Simple"]], reglages.fichePC)}</div>`
-      : `<div class="reg"><span>Onglets du bas</span>${seg("onglets", [["t1", "Cases"], ["t2", "Bloc"], ["t3", "Classeur"], ["t4", "Tuiles"]], reglages.onglets)}</div>
-        <div class="reg"><span>Vibrations</span>${seg("vibrations", [["oui", "Oui"], ["non", "Non"]], reglages.vibrations)}</div>`}
+      : `<div class="reg"><span>Vibrations</span>${seg("vibrations", [["oui", "Oui"], ["non", "Non"]], reglages.vibrations)}</div>`}
       <div class="reg"><span>Animations</span>${seg("animations", [["completes", "Complètes"], ["simples", "Simples"]], reglages.animations)}</div>
       <div class="reg"><span>Frise</span>${seg("frise", FRISES.map(f => [f.id, f.nom]), reglages.frise)}</div>
     </div>
@@ -1334,7 +1445,6 @@ function ouvrirReglages() {
     <input type="file" id="fichier-import" accept=".xlsx" hidden>
     <div class="sect">Données</div>
     ${compteurHTML(nbTest)}
-    <div class="groupe" style="margin-top:8px"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter notes, dates, affiches… une par une</small></span><span class="val">bêta${ic("droite")}</span></button></div>
     <div class="sect">Données de test</div>
     <div class="deux"><button class="btn" data-action="test-charger">Charger</button><button class="btn" data-action="test-effacer" ${nbTest ? "" : "disabled"}>Effacer${nbTest ? ` (${nbTest})` : ""}</button></div>
     <p class="version">${VERSION}</p></div>`);
@@ -1483,7 +1593,9 @@ function candidatsTri() {
 }
 function ouvrirTri() {
   tri = tri || { types: new Set([ui.type]), champs: new Set(["note", "date", "affiche"]), affiches: new Map() };
-  Object.assign(tri, { etape: "choix", ids: [], i: 0, faites: 0, per: etatPeriode() });
+  // Retour depuis une fiche ouverte pendant le tri : on reprend à la même carte
+  if (tri.reprendre) tri.reprendre = false;
+  else Object.assign(tri, { etape: "choix", ids: [], i: 0, faites: 0, per: etatPeriode() });
   ouvrirVoile("trier", estPC() ? "centre" : "plein", `<div class="fenetre tri" role="dialog" aria-label="Trier mes fiches">
     <div class="fhd"><h2>Trier mes fiches</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div id="tri-corps"></div></div>`);
@@ -1514,9 +1626,9 @@ function majTri() {
   const n = tri.ids.length;
   $("tri-corps").innerHTML = `<div class="tri-prog"><span>${tri.i + 1} / ${n}</span><i><b style="width:${Math.round(tri.i / n * 100)}%"></b></i></div>
     <div class="tri-carte" id="tri-carte">
-      <div class="tri-tete">${vignette(m, "tri-aff", true)}<div class="fi-tt"><h3>${echapper(m.titre)}</h3>
-        <div class="fi-me">${[typeDe(m.type).un, m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}<br>
-          <i class="dot" style="background:var(--st-${m.statut})"></i> ${nomStatut(m.statut, m.type)}</div></div></div>
+      <button class="tri-tete" data-action="tri-fiche" aria-label="Ouvrir la fiche">${vignette(m, "tri-aff", true)}<span class="fi-tt"><h3>${echapper(m.titre)}</h3>
+        <span class="fi-me">${[typeDe(m.type).un, m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}<br>
+          <i class="dot" style="background:var(--st-${m.statut})"></i> ${nomStatut(m.statut, m.type)}</span></span><span class="tri-ouvrir">${ic("droite", "s")}</span></button>
       ${blocs}</div>
     <div class="deux tri-bas"><button class="btn" data-action="tri-precedent" ${tri.i ? "" : "disabled"}>${ic("retour", "s")}Précédent</button><button class="btn pri" data-action="tri-suivant">Suivant${ic("droite", "s")}</button></div>`;
   if (tri.champs.has("affiche") && !tri.affiches.has(m.id)) {
@@ -1529,7 +1641,7 @@ function blocTri(c, m) {
   if (c === "note") return `<div class="tri-bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
     <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button>
     <button class="pastille-rev tri-rev ${m.revoir ? "on" : ""}" data-action="tri-revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${MOTS[m.type].revoir}</button></span></div>
-    <div class="tri-bloc col"><span class="k">Avis</span>
+    <div class="tri-bloc col"><span class="k">Avis<span class="tri-ok" id="tri-avis-ok" hidden>${ic("ok", "s")}Enregistré</span></span>
       <textarea class="avis tri-avis" data-tri-avis rows="2" placeholder="Mon avis…" aria-label="Mon avis">${echapper(m.avis)}</textarea></div>`;
   if (c === "date") return `<div class="tri-bloc col"><span class="k">${MOTS[m.type].passage}${m.passages.length ? ` : ${m.passages.map(x => echapper(texteDate(x))).join(", ")}` : ""}</span>
       ${periodeHTML(tri.per || (tri.per = etatPeriode()), "tri", "Ajouter")}</div>`;
@@ -1547,6 +1659,41 @@ function affichesTriHTML(m) {
   return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
 }
 function majAffichesTri(m) { if ($("tri-affs")) $("tri-affs").innerHTML = affichesTriHTML(m); }
+// Étoiles « vivantes » : elles s'allument en vague (une petite vibration par étoile) et la dernière lance des éclats
+function etoilesVivantes(n) {
+  const etoiles = [...document.querySelectorAll("#tri-carte .note .et.on")];
+  if (!n || !etoiles.length) { vibrer("pas"); return; }
+  vibrer(Array.from({ length: n * 2 - 1 }, (_, k) => k % 2 ? 45 : VIBRATIONS.etoile));
+  etoiles.forEach((s, i) => animer(s, [{ transform: "scale(.6)", opacity: .3 }, { transform: "scale(1.55) rotate(-8deg)", opacity: 1, offset: .5 }, { transform: "none" }],
+    { duration: 380, delay: i * 55, easing: RESSORT, fill: "backwards" }));
+  if (!animOK()) return;
+  const derniere = etoiles[etoiles.length - 1];
+  setTimeout(() => {
+    const r = derniere.getBoundingClientRect();
+    for (let k = 0; k < 8; k++) {
+      const p = document.createElement("i");
+      p.className = "eclat";
+      p.style.left = r.left + r.width / 2 + "px"; p.style.top = r.top + r.height / 2 + "px";
+      document.body.appendChild(p);
+      const a = k / 8 * Math.PI * 2, d = 18 + (k % 2) * 10;
+      const anim = animer(p, [{ transform: "translate(-50%,-50%) scale(1)", opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(a) * d}px), calc(-50% + ${Math.sin(a) * d}px)) scale(.2)`, opacity: 0 }],
+        { duration: 480, easing: "cubic-bezier(.2,.7,.3,1)" });
+      setTimeout(() => p.remove(), 520);
+      if (!anim) p.remove();
+    }
+  }, (etoiles.length - 1) * 55 + 120);
+}
+// Avis enregistré : petite coche « Enregistré » qui apparaît puis s'efface
+function avisEnregistre() {
+  const ok = $("tri-avis-ok");
+  if (!ok) return;
+  ok.hidden = false;
+  vibrer("enregistre");
+  animer(ok, [{ opacity: 0, transform: "translateX(-6px) scale(.8)" }, { opacity: 1, transform: "none", offset: .25 }, { opacity: 1, offset: .8 }, { opacity: 0 }], { duration: 1800, easing: DOUX });
+  animer(ok.querySelector(".ic"), [{ strokeDashoffset: 24 }, { strokeDashoffset: 0 }], { duration: 380, delay: 80, easing: DOUX, fill: "backwards" });
+  clearTimeout(avisEnregistre.t);
+  avisEnregistre.t = setTimeout(() => { if ($("tri-avis-ok")) $("tri-avis-ok").hidden = true; }, 1850);
+}
 // Après une modif dans le mode Trier : on enregistre et on redessine (la carte reste : on passe avec « Suivant »)
 function majFicheTri(m, modif) {
   modif(m);
@@ -1683,6 +1830,7 @@ function majDecouvrir() {
   const f = filmDec();
   if (!f) {
     c.innerHTML = `<div class="tri-fin"><b>C'est tout</b><p>${dec.faits} film${dec.faits > 1 ? "s" : ""} rangé${dec.faits > 1 ? "s" : ""}.</p>
+      ${dec.hist.length ? `<p><button class="btn" data-action="dec-retour">${ic("rejouer", "s")}Revenir au dernier film</button></p>` : ""}
       <div class="deux"><button class="btn" data-action="dec-encore">Autres catégories</button><button class="btn pri" data-action="fermer">Fermer</button></div></div>`;
     return;
   }
@@ -1690,6 +1838,7 @@ function majDecouvrir() {
   c.innerHTML = `<div class="tri-prog"><span>${dec.i + 1} / ${n}</span><i><b style="width:${Math.round(dec.i / n * 100)}%"></b></i></div>
     <div id="dec-zone">${carteDecHTML(f)}</div>
     <div class="dec-ronds">
+      <button class="dec-rond petit retour" data-action="dec-retour" aria-label="Revenir au film précédent" ${dec.hist.length ? "" : "disabled"}>${ic("rejouer", "s")}<small>Retour</small></button>
       <button class="dec-rond non" data-dec="rejet" aria-label="Pas intéressé">${ic("x")}<small>Non</small></button>
       <button class="dec-rond petit" data-dec="avoir" style="--c:var(--st-avoir)">${ic("savoir", "s")}<small>À voir</small></button>
       <button class="dec-rond petit" data-dec="reserve" style="--c:var(--st-reserve)">${ic("boite", "s")}<small>Réserve</small></button>
@@ -1701,7 +1850,7 @@ function majDecouvrir() {
   dec.file.slice(dec.i + 1, dec.i + 6).forEach(infosDec);
 }
 function lancerDecouvrir() {
-  dec = { file: alphabetique(filmsDec(catsDec())), i: 0, infos: new Map(), affiches: new Map(), affOuvert: false, vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
+  dec = { file: alphabetique(filmsDec(catsDec())), i: 0, hist: [], infos: new Map(), affiches: new Map(), affOuvert: false, vaOuvert: false, va: null, vaOnglet: "proches", faits: 0 };
   tri.etape = "cartes";
   majTri();
 }
@@ -1720,10 +1869,12 @@ function actionDec(statut) {
     const m = creerFiche({ titre: f.titre, annee: f.annee, createur: r.createur || "", genres: r.genres || [], image: r.image || "", afficheChoisie: !!r.choisie }, "film", statut);
     annuler = () => effacerMedias([m.id]);
   }
-  const i = dec.i;
+  // Chaque choix est gardé dans une pile : « Retour » les annule un par un, aussi loin qu'on veut
+  const h = { i: dec.i, annuler };
+  dec.hist.push(h);
   dec.faits++;
   afficherToast(`« ${f.titre} » : ${statut === "rejet" ? "pas intéressé" : nomStatut(statut, "film")}`, () => {
-    annuler(); dec.i = i; dec.faits--; dec.vaOuvert = false; dec.va = null; dec.affOuvert = false; rendreContenu(); majTri();
+    if (dec.hist[dec.hist.length - 1] === h) retourDec();
   });
   rendreContenu();
   // La carte s'en va : à droite (Vu), à gauche (Non), vers le haut (À voir / Réserve)
@@ -1736,7 +1887,19 @@ function actionDec(statut) {
   };
   const a = animer(carte, [{ transform: carte?.style.transform || "none", opacity: 1 }, { transform: fin, opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" });
   if (a) setTimeout(suite, 270); else suite();
-  vibrer();
+  vibrer(statut === "fini" ? "vu" : statut === "rejet" ? "non" : statut);
+}
+// « Retour » : annule le dernier choix et fait revenir sa carte (depuis la gauche)
+function retourDec() {
+  const h = dec?.hist.pop();
+  if (!h) return;
+  h.annuler();
+  dec.i = h.i; dec.faits = Math.max(0, dec.faits - 1);
+  dec.vaOuvert = false; dec.va = null; dec.affOuvert = false;
+  rendreContenu();
+  majTri();
+  animer($("dec-carte"), [{ opacity: 0, transform: "translateX(-70%) rotate(-8deg)" }, { opacity: 1, transform: "none" }], { duration: 340, easing: RESSORT });
+  vibrer("pas");
 }
 // « Voir aussi » sous la carte (comme dans la fiche)
 function decVaHTML() {
@@ -1787,6 +1950,10 @@ document.addEventListener("pointermove", e => {
   glisseDec.c.style.transform = `translateX(${dx}px) rotate(${dx / 25}deg)`;
   glisseDec.c.style.setProperty("--vu", Math.max(0, Math.min(1, dx / 90)));
   glisseDec.c.style.setProperty("--non", Math.max(0, Math.min(1, -dx / 90)));
+  // petite vibration quand la carte a assez glissé pour choisir (et le tampon VU / NON est plein)
+  const passe = Math.abs(dx) >= 90;
+  if (passe && !glisseDec.seuil) vibrer("seuil");
+  glisseDec.seuil = passe;
 });
 function finGlisseDec(annule) {
   if (!glisseDec) return;
@@ -1838,16 +2005,19 @@ function montrerBulle(l) {
 // ---------- 8. Gestes et animations ----------
 
 // Changer de page (À voir / En cours / Vus) : la liste glisse, le titre change avec un petit fondu
+// (n = numéro de page : 0 À voir, 1 En cours, 2 Vus ; une page qui n'existe pas pour ce type est sautée)
 function allerPage(n, { glisse = false } = {}) {
+  const vis = pagesDe(ui.type);
   n = Math.max(0, Math.min(2, n));
+  if (!vis.includes(n)) n = n > ui.page ? vis.find(p => p > ui.page) ?? ui.page : [...vis].reverse().find(p => p < ui.page) ?? ui.page;
   const dir = Math.sign(n - ui.page) || 1, change = n !== ui.page;
   ui.page = n; changerReglage("page", n);
   if (change) vibrer();
   if (vueActuelle() === "tab") { rendreEntete(); rendreTableau(); return; }
-  const piste = $("piste");
+  const piste = $("piste"), pos = vis.indexOf(n);
   if (piste) {
     piste.style.transition = animOK() ? `transform .42s ${DOUX}` : "none";
-    piste.style.transform = `translateX(${-n * 100 / 3}%)`;
+    piste.style.transform = `translateX(${-pos * 100 / vis.length}%)`;
   }
   // En-tête
   const mot = document.querySelector(".dmot"), titre = $("dtitre");
@@ -1858,11 +2028,12 @@ function allerPage(n, { glisse = false } = {}) {
       animer(mot, [{ transform: `translateX(${dir * 16}px)`, opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 260, easing: DOUX });
     }, animOK() ? 130 : 0);
   }
-  document.querySelectorAll(".points i").forEach((p, i) => p.classList.toggle("on", i === n));
-  document.querySelectorAll(".statuts .st").forEach((s, i) => s.classList.toggle("on", i === n));
+  document.querySelectorAll(".points i").forEach(p => p.classList.toggle("on", +p.dataset.page === n));
+  document.querySelectorAll(".statuts .st").forEach(s => s.classList.toggle("on", +s.dataset.page === n));
   poserTraitStatut();
   // Les lignes de la nouvelle page arrivent en cascade
-  if (change && piste) cascade(piste.children[n]);
+  if (change && piste) cascade(piste.children[pos]);
+  majDefil();
 }
 function cascade(page) {
   if (!page || !animOK()) return;
@@ -1876,7 +2047,7 @@ function changerType(t) {
   vibrer();
   if (adresse.frise || adresse.fiche) { location.hash = ""; return; }   // le routeur redessine
   rendreTout();
-  const p = $("piste"); if (p) cascade(p.children[ui.page]);
+  cascade(pageAffichee());
   const og = document.querySelector("#onglets .og.on .ic");
   animer(og, [{ transform: "none" }, { transform: "translateY(-4px)", offset: .4 }, { transform: "none" }], { duration: 420, easing: RESSORT });
 }
@@ -1896,34 +2067,127 @@ $("contenu").addEventListener("pointermove", e => {
     glisse.actif = true;
     try { $("contenu").setPointerCapture(glisse.id); } catch (err) { /* rien */ }
   }
+  const vis = pagesDe(ui.type), pos = vis.indexOf(ui.page);
   let d = dx;
-  if ((ui.page === 0 && d > 0) || (ui.page === 2 && d < 0)) d *= .3;   // élastique aux bords
+  if ((pos === 0 && d > 0) || (pos === vis.length - 1 && d < 0)) d *= .3;   // élastique aux bords
   glisse.dx = d;
   const p = $("piste");
   p.style.transition = "none";
-  p.style.transform = `translateX(calc(${-ui.page * 100 / 3}% + ${d}px))`;
+  p.style.transform = `translateX(calc(${-pos * 100 / vis.length}% + ${d}px))`;
 });
 function finGlisse() {
   if (!glisse) return;
   const g = glisse; glisse = null;
   if (!g.actif) return;
   bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 60);
+  const vis = pagesDe(ui.type), pos = vis.indexOf(ui.page);
   const vite = Math.abs(g.dx) / (performance.now() - g.t0) > .5;
-  const n = (Math.abs(g.dx) > $("contenu").clientWidth * .22 || (vite && Math.abs(g.dx) > 24)) ? ui.page - Math.sign(g.dx) : ui.page;
+  const cible = (Math.abs(g.dx) > $("contenu").clientWidth * .22 || (vite && Math.abs(g.dx) > 24)) ? pos - Math.sign(g.dx) : pos;
+  const n = vis[Math.max(0, Math.min(vis.length - 1, cible))];
+  const avant = ui.page;
   allerPage(n, { glisse: true });
-  if (n === ui.page) { const p = $("piste"); p.style.transition = `transform .35s ${DOUX}`; p.style.transform = `translateX(${-ui.page * 100 / 3}%)`; }
+  if (n === avant) { const p = $("piste"); p.style.transition = `transform .35s ${DOUX}`; p.style.transform = `translateX(${-pos * 100 / vis.length}%)`; }
 }
 $("contenu").addEventListener("pointerup", finGlisse);
 $("contenu").addEventListener("pointercancel", finGlisse);
+
+// Pincer à deux doigts : écarter = zoomer, rapprocher = dézoomer (un cran à chaque fois)
+let pince = null;
+const ecart = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+$("contenu").addEventListener("touchstart", e => {
+  if (e.touches.length !== 2 || adresse.frise) return;
+  pince = { d0: ecart(e.touches) };
+  // (le 2e doigt ne doit pas faire glisser les pages)
+  if (glisse?.actif) { const p = $("piste"), vis = pagesDe(ui.type); p.style.transition = `transform .3s ${DOUX}`; p.style.transform = `translateX(${-vis.indexOf(ui.page) * 100 / vis.length}%)`; }
+  glisse = null;
+}, { passive: true });
+$("contenu").addEventListener("touchmove", e => {
+  if (!pince || e.touches.length !== 2) return;
+  e.preventDefault();
+  const r = ecart(e.touches) / pince.d0;
+  if (r > 1.28) { changerZoom(+1); pince.d0 = ecart(e.touches); }
+  else if (r < .78) { changerZoom(-1); pince.d0 = ecart(e.touches); }
+}, { passive: false });
+$("contenu").addEventListener("touchend", e => { if (e.touches.length < 2) { if (pince) { bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 250); } pince = null; } });
+// PC : Ctrl + molette sur la liste
+let dernierZoomMolette = 0;
+$("contenu").addEventListener("wheel", e => {
+  if (!e.ctrlKey || adresse.frise) return;
+  e.preventDefault();
+  if (performance.now() - dernierZoomMolette < 180) return;
+  dernierZoomMolette = performance.now();
+  changerZoom(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+
+// ---------- Barre de défilement rapide (téléphone) ----------
+// Une poignée à droite qu'on attrape pour aller vite n'importe où ; en glissant, une bulle montre
+// l'étape (★★★★, 2019, M…). Elle apparaît quand on fait défiler une liste assez longue.
+let defilVeille = null, defilPrise = null;
+function majDefil() {
+  const b = $("defil"), p = pageAffichee();
+  if (!b) return;
+  const max = p ? p.scrollHeight - p.clientHeight : 0;
+  b.hidden = estPC() || !p || max < p.clientHeight * 1.2;
+  if (b.hidden) return;
+  const poignee = b.querySelector(".defil-poignee");
+  poignee.style.transform = `translateY(${(p.scrollTop / max) * (b.clientHeight - poignee.offsetHeight)}px)`;
+}
+function reveillerDefil() {
+  const b = $("defil");
+  if (!b || b.hidden) return;
+  b.classList.add("actif");
+  clearTimeout(defilVeille);
+  if (!defilPrise) defilVeille = setTimeout(() => b.classList.remove("actif"), 1400);
+}
+// Étape visible en haut de la page (le dernier titre d'étape passé)
+function etapeEnHaut(p) {
+  const haut = p.getBoundingClientRect().top + 8;
+  let etape = "";
+  for (const e of p.querySelectorAll(".etape")) { if (e.getBoundingClientRect().top <= haut) etape = e.textContent; else break; }
+  return etape || p.querySelector(".etape")?.textContent || "";
+}
+document.addEventListener("scroll", e => {
+  if (e.target === pageAffichee()) { majDefil(); reveillerDefil(); }
+}, true);
+document.addEventListener("pointerdown", e => {
+  const b = e.target.closest("#defil");
+  if (!b || !b.classList.contains("actif")) return;
+  e.stopPropagation();
+  defilPrise = { b, id: e.pointerId, etape: "" };
+  b.classList.add("prise");
+  try { b.setPointerCapture(e.pointerId); } catch (err) { /* rien */ }
+  allerAuDoigt(e.clientY);
+}, true);
+function allerAuDoigt(y) {
+  const { b } = defilPrise, p = pageAffichee();
+  if (!p) return;
+  const r = b.getBoundingClientRect(), h = b.querySelector(".defil-poignee").offsetHeight;
+  const ratio = Math.max(0, Math.min(1, (y - r.top - h / 2) / (r.height - h)));
+  p.scrollTop = ratio * (p.scrollHeight - p.clientHeight);
+  majDefil();
+  const etape = etapeEnHaut(p), bulle = b.querySelector(".defil-bulle");
+  bulle.textContent = etape;
+  bulle.hidden = !etape;
+  bulle.style.top = (ratio * (r.height - h) + h / 2) + "px";
+  if (etape && etape !== defilPrise.etape) { defilPrise.etape = etape; vibrer(); }
+}
+document.addEventListener("pointermove", e => { if (defilPrise) { e.preventDefault(); allerAuDoigt(e.clientY); } }, true);
+["pointerup", "pointercancel"].forEach(ev => document.addEventListener(ev, () => {
+  if (!defilPrise) return;
+  defilPrise.b.classList.remove("prise");
+  defilPrise = null;
+  reveillerDefil();
+}, true));
 let bloquerClic = false;   // un glisser ne doit pas ouvrir la fiche touchée au départ
 
 // Menu du titre (téléphone) : toucher = ouvrir ; appuyer, glisser vers le choix, lâcher = choisir
 let appuiTitre = null;
 function menuTitre(ancre) {
   ancre.classList.add("ouvert");
-  ouvrirMenu(ancre, PAGES.map((p, i) => ({
+  const vis = pagesDe(ui.type);
+  ouvrirMenu(ancre, vis.map(i => ({
     html: `<i class="dot" style="background:${couleurPage(i)}"></i><span>${nomPage(i, ui.type)}<small>${["+ en réserve", "", "+ abandonnés"][i]}</small></span>`, coche: i === ui.page
-  })), i => allerPage(i), { classe: "menu-titre" });
+  })), k => allerPage(vis[k]), { classe: "menu-titre" });
 }
 document.addEventListener("pointerdown", e => {
   const t = e.target.closest("#dtitre");
@@ -1992,7 +2256,7 @@ function ajouterPassage(m, date, remplace = null) {
     if (ouvert && !date.includes("/") && valeurBout(date) >= valeurBout(ouvert.slice(0, -1))) { l = l.filter(p => p !== ouvert); date = `${ouvert.slice(0, -1)}/${date}`; }
     else if (ouvert && !estOuvert(date) && remplace == null) l = l.filter(p => p !== ouvert);
     x.passages = trierPassages([...l, date]);
-    if (estOuvert(date)) return;
+    if (estOuvert(date)) { if (x.type !== "film") x.statut = "encours"; return; }   // « Commencé » : passe en cours
     x.revoir = false;
     if (x.statut !== "fini" && x.statut !== "abandon") x.statut = "fini";
   });
@@ -2032,7 +2296,7 @@ document.addEventListener("click", e => {
     document.querySelectorAll(".vues button").forEach(b => b.classList.toggle("on", b === el));
     rendreOutils(); rendreContenu();
     animer(document.querySelector(`.vues button[data-vue="${d.vue}"] .ic`), [{ transform: "scale(.7)" }, { transform: "scale(1.2)", offset: .55 }, { transform: "none" }], { duration: 380 });
-    cascade($("piste")?.children[ui.page]);
+    cascade(pageAffichee());
     return;
   }
   if (d.frise) { changerReglage("frise", d.frise); rendreEntete(); rendreContenu(); return; }
@@ -2087,7 +2351,7 @@ document.addEventListener("click", e => {
         } else if (!c) ui.filtres.clear();
         else if (ui.filtres.has(c)) ui.filtres.delete(c); else ui.filtres.add(c);
         rendreOutils(); rendreContenu();
-        cascade($("piste")?.children[ui.page]);
+        cascade(pageAffichee());
       }, { classe: "menu-long" });
       return;
     }
@@ -2105,8 +2369,8 @@ document.addEventListener("click", e => {
         if (c === "modifier") location.replace("#modifier=" + m.id);
         else if (c === "garder") {
           // On demande dans quel statut la fiche repart
-          setTimeout(() => ouvrirMenu(el, [{ titre: "Repartir en…" }, ...STATUTS.map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}` }))],
-            k => garderEtReinitialiser(m, STATUTS[k - 1])), 160);
+          setTimeout(() => ouvrirMenu(el, [{ titre: "Repartir en…" }, ...statutsDe(m.type).map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}` }))],
+            k => garderEtReinitialiser(m, statutsDe(m.type)[k - 1])), 160);
         } else {
           effacerMedias([m.id]);
           retour();
@@ -2117,7 +2381,7 @@ document.addEventListener("click", e => {
     }
     case "menu-statut":
       if (!m) return;
-      ouvrirMenu(el, STATUTS.map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}`, coche: s === m.statut })), i => changerStatut(m, STATUTS[i]));
+      ouvrirMenu(el, statutsDe(m.type).map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}`, coche: s === m.statut })), i => changerStatut(m, statutsDe(m.type)[i]));
       return;
     case "coeur":
       if (!m) return;
@@ -2211,7 +2475,8 @@ document.addEventListener("click", e => {
   // --- Mode Trier ---
   if (tri) {
     const mt = ficheTri();
-    if (d.triType) { if (tri.types.has(d.triType)) { if (tri.types.size > 1) tri.types.delete(d.triType); } else tri.types.add(d.triType); majTri(); return; }
+    // Un seul type à la fois : toucher « Jeux » garde seulement les jeux
+    if (d.triType) { tri.types = new Set([d.triType]); majTri(); vibrer(); return; }
     if (d.triChamp) { if (tri.champs.has(d.triChamp)) { if (tri.champs.size > 1) tri.champs.delete(d.triChamp); } else tri.champs.add(d.triChamp); majTri(); return; }
     // Onglets Compléter / Découvrir, et mode Découvrir
     if (d.triMode) { tri.mode = d.triMode; tri.etape = "choix"; majTri(); return; }
@@ -2224,6 +2489,7 @@ document.addEventListener("click", e => {
     if (d.action === "dec-encore") { tri.etape = "choix"; majTri(); return; }
     if (d.dec) { actionDec(d.dec); return; }
     if (d.action === "dec-va") { basculerVaDec(); return; }
+    if (d.action === "dec-retour") { retourDec(); return; }
     // Affiche de la carte : enlever / choisir une autre
     if (d.action === "dec-aff-suppr") { changerAffDec(""); return; }
     if (d.action === "dec-aff-modif") { ouvrirAffDec(); return; }
@@ -2239,7 +2505,9 @@ document.addEventListener("click", e => {
     if (d.action === "tri-precedent") { if (tri.i > 0) avancerTri(-1); return; }
     if (d.action === "tri-suivant") { avancerTri(1, mt && !aCompleter(mt, tri.champs).length); return; }
     if (mt) {
-      if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); return; }
+      if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); etoilesVivantes(n); return; }
+      // Toucher l'affiche ou le titre : ouvre la fiche (on revient à la même carte en la fermant)
+      if (d.action === "tri-fiche") { tri.reprendre = true; aller(adresseFiche(mt.id)); return; }
       if (d.action === "tri-coeur") { majFicheTri(mt, x => { x.coeur = !x.coeur; }); return; }
       // « À revoir / À rejouer / À relire » (pour un jeu, enlève « Infini »)
       if (d.action === "tri-revoir") { majFicheTri(mt, x => { x.revoir = !x.revoir; if (x.revoir) x.infini = false; }); return; }
@@ -2372,7 +2640,7 @@ document.addEventListener("input", e => {
     mt.avis = texte;
     clearTimeout(minuteurAvis);
     // (on relit la fiche à ce moment-là : une note donnée entre-temps n'est pas écrasée)
-    minuteurAvis = setTimeout(() => { const x = medias.get(id); if (x) { x.avis = texte; ecrireMedia(x); rendreContenu(); } }, 600);
+    minuteurAvis = setTimeout(() => { const x = medias.get(id); if (x) { x.avis = texte; ecrireMedia(x); rendreContenu(); avisEnregistre(); } }, 700);
     return;
   }
   if (t.id === "recherche-pc" || t.id === "recherche-tel") { ui.recherche = t.value; rendreContenu(); return; }
@@ -2462,7 +2730,7 @@ function cliqueCase(td) {
   validerCase();
   tableauEnEdition = true;
   let champ;
-  if (col === "statut") champ = `<select>${STATUTS.map(s => `<option value="${s}" ${s === m.statut ? "selected" : ""}>${nomStatut(s, m.type)}</option>`).join("")}</select>`;
+  if (col === "statut") champ = `<select>${statutsDe(m.type).map(s => `<option value="${s}" ${s === m.statut ? "selected" : ""}>${nomStatut(s, m.type)}</option>`).join("")}</select>`;
   else if (col === "note") champ = `<select>${[0, 1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === m.note ? "selected" : ""}>${n ? "★".repeat(n) : "—"}</option>`).join("")}</select>`;
   else if (col === "support") champ = `<select><option value="">—</option>${[...new Set([...donnees.supports, m.support].filter(Boolean))].map(s => `<option ${s === m.support ? "selected" : ""}>${echapper(s)}</option>`).join("")}</select>`;
   else champ = `<input value="${echapper(col === "titre" ? m.titre : col === "annee" ? (m.annee || "") : m.tags.join(", "))}" ${col === "annee" ? 'type="number"' : ""} autocomplete="off">`;
