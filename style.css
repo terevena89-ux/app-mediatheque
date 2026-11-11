@@ -317,8 +317,6 @@ body.tel .panneau { display: none; }
 .tog::after { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: left .4s var(--ressort), width .4s var(--ressort); }
 .tog.on { background: var(--acc); }
 .tog.on::after { left: 19px; }
-.tog.etire::after { width: 22px; }
-.tog.on.etire::after { left: 13px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 2px; font-size: 12.5px; background: var(--surface); }
 .chip.plus { color: var(--acc); font-weight: 500; box-shadow: var(--ob); }
 .chip.tag .x { color: var(--faint); margin-left: 2px; }
@@ -804,10 +802,29 @@ button.tri-tete:active { background: var(--hover); transform: scale(.985); trans
 /* « Enregistré » à côté de « Avis » */
 .tri-ok { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--st-fini); }
 .tri-ok .ic { width: 13px; height: 13px; stroke-width: 2.4; stroke-dasharray: 24; }
-/* Éclats autour de la dernière étoile */
-.eclat { position: fixed; z-index: 70; width: 6px; height: 6px; border-radius: 50%; background: var(--star); pointer-events: none; box-shadow: 0 0 6px color-mix(in srgb, var(--acc) 60%, transparent); }
-.eclat:nth-child(odd) { background: var(--acc); }
 /* Découvrir : bouton Retour */
 .dec-rond.retour { width: 44px; height: 44px; color: var(--muted); }
 .dec-rond.retour .ic { width: 15px; height: 15px; transform: scaleX(-1); }
 .dec-rond:disabled { opacity: .35; }
+
+/* v0.9.5 : bouton « ? » = je noterai plus tard */
+.et-q { width: 26px; height: 26px; margin-left: 2px; border-radius: 50%; border: 1px dashed var(--faint); color: var(--muted); font-weight: 700; font-size: 13px; display: grid; place-items: center;
+  transition: transform .38s var(--ressort), background-color .2s, color .2s; }
+.et-q:active { transform: scale(.88); transition-duration: .08s; }
+.et-q.on { border-style: solid; border-color: var(--acc); background: var(--acc-soft); color: var(--acc); }
+
+/* =========================================================
+   v0.10 : Trier › Vérifier (liste collée, validée par glisser)
+   ========================================================= */
+.ver-texte { display: block; width: 100%; min-height: 120px; padding: 9px 11px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface);
+  font: 12.5px/1.45 ui-monospace, Consolas, monospace; resize: vertical; outline: none; }
+.ver-texte:focus { border-color: var(--acc); }
+.ver-bilan { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.ver-carte .ver-ouvrir { display: flex; flex-direction: column; align-items: center; width: 100%; text-align: center; border-radius: 8px; }
+.ver-carte .ver-ouvrir:active { background: var(--hover); }
+.ver-infos { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 12px; margin-top: 8px; font-size: 12.5px; }
+.ver-infos > span { display: inline-flex; align-items: center; gap: 5px; }
+.ver-infos .coeur { width: 13px; height: 13px; fill: var(--heart); stroke: none; }
+.ver-q { color: var(--muted); font-style: italic; }
+.ver-avis { margin-top: 8px; font-size: 13px; color: var(--muted); font-style: italic; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ver-toucher { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--acc); font-weight: 500; }

@@ -1,5 +1,19 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.0 — 2026-11-11
+- Trier mes fiches › nouvel onglet **Vérifier** : je colle une liste (une ligne par titre : `Type | Titre | Année | Statut | Note | Date | Avis`, seul le titre est obligatoire).
+  - Chaque ligne devient une fiche « à vérifier », cachée partout ailleurs (listes, recherche, frise, tri).
+  - Les titres déjà dans ma liste sont écartés ; le bilan dit lesquels, et les lignes illisibles.
+  - L'appli cherche les infos de base comme pour un ajout normal (affiche, créateur, genres).
+  - Cartes : glisser à droite = **Ajouter** (la fiche rejoint ma médiathèque), à gauche = **Ignorer** (effacée), « Retour » pour revenir en arrière ; toucher la carte ouvre la vraie fiche pour tout compléter.
+- Réglages › « Trier mes fiches » affiche le nombre de titres à vérifier. Excel : colonne « À vérifier ».
+
+## v0.9.5 — 2026-11-11
+- Zoom fluide : en pinçant, la liste grossit ou rétrécit en suivant les doigts, puis se cale en douceur sur le niveau le plus proche.
+- Étoiles du mode Trier : plus d'animation (juste une petite vibration).
+- Bouton « ? » à côté des étoiles (fiche et mode Trier) : « je noterai plus tard » ; le mode Trier ne redemande plus la note. Excel : colonne « Note plus tard ».
+- Ménage : plus de données de test (Charger / Effacer, filtre « Fiches de test », « Garder et réinitialiser », colonne Excel « Test », fichier test.js) et quelques morceaux de code qui ne servaient plus.
+
 ## v0.9.4 — 2026-11-11
 - Tri plus agréable :
   - vibrations différentes selon le choix (Vu, Pas intéressé, À voir, Réserve), une petite quand la carte a assez glissé ;

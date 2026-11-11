@@ -10,7 +10,7 @@
 //   7. Fenêtres : Ajouter, Modifier, Réglages, Thème, Supports
 //   8. Gestes et animations (glisser entre les pages, menu du titre…)
 //   9. Clics, saisie, clavier
-//  10. Export / import Excel, données de test
+//  10. Export / import Excel
 //  11. Démarrage
 // =========================================================
 
@@ -26,12 +26,11 @@ import { firebaseConfig } from "./firebase-config.js";
 import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lireFeuille } from "./excel-style.js";
 import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier, dateDeSortie } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
-import { genererDonneesTest } from "./test.js";
 import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.9.4";
+const VERSION = "v0.10.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -228,7 +227,7 @@ function dateDuTexte(t) {
 
 // ---------- 2. Les données ----------
 // Une fiche = { id, type, titre, annee, createur, genres[], image, miniature, statut, revoir, note, coeur,
-//               passages[], support, tags[], avis, saisons { actif, total, vues[] }, test, cree }
+//               passages[], support, tags[], avis, saisons { actif, total, vues[] }, cree }
 //   image     : adresse de l'affiche sur le web
 //   miniature : petite copie de l'affiche (~10 Ko) gardée dans la fiche
 //   passages  : dates ou périodes où je l'ai vu / joué / lu (plusieurs si revu) ;
@@ -252,11 +251,15 @@ function normaliser(id, d) {
     // true = j'ai choisi / modifié / enlevé l'affiche moi-même (sinon : affiche trouvée automatiquement).
     // Rien d'affiché pour l'instant : servira à passer en revue les affiches automatiques.
     afficheChoisie: !!d.afficheChoisie,
+    // true = ajoutée par « Trier › Vérifier » et pas encore validée : cachée partout ailleurs
+    aVerifier: !!d.aVerifier,
     // (v0.9.2 : un film « En cours » passe en « Vu » ; sa période « depuis … » devient sa date de visionnage)
     statut: STATUTS.includes(d.statut) ? (d.type === "film" && d.statut === "encours" ? "fini" : d.statut) : "avoir",
     revoir: !!d.revoir,
     infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
+    // « ? » : je ne peux pas noter pour l'instant (le mode Trier ne la redemande plus)
+    notePlusTard: !d.note && !!d.notePlusTard,
     coeur: !!d.coeur,
     passages: fusionnerDebut(liste(d.passages).map(migrerDate).map(p => d.type === "film" && p.endsWith("/") ? p.slice(0, -1) : p).filter(dateValide),
       lireBout(String(d.debut || "")) ? d.debut : "", d.type === "film" && d.statut === "encours" ? "fini" : d.statut),
@@ -264,7 +267,6 @@ function normaliser(id, d) {
     tags: liste(d.tags),
     avis: String(d.avis || ""),
     saisons: { actif: !!s.actif, total: Math.max(0, Math.round(+s.total || 0)), vues: (Array.isArray(s.vues) ? s.vues : []).map(Number).filter(n => n > 0) },
-    test: !!d.test,
     cree: typeof d.cree === "number" ? d.cree : 0
   };
 }
@@ -537,9 +539,8 @@ async function ameliorerMiniatures() {
 // ---------- 5. Affichage ----------
 
 // Fiches visibles d'une page (type actuel, recherche, filtres, tri)
-// (bêta) Filtres pour trier mes données : fiches de test, fiches incomplètes…
+// (bêta) Filtres pour trier mes données : fiches incomplètes…
 const FILTRES_BETA = {
-  test:     { nom: "Fiches de test",     test: m => m.test },
   image:    { nom: "Sans affiche",       test: m => !m.image && !m.miniature },
   note:     { nom: "Sans note",          test: m => !m.note },
   date:     { nom: "Sans date",          test: m => !m.passages.length },
@@ -593,7 +594,7 @@ const categorieAvoir = m => m.statut === "avoir" ? "avoir" : m.statut === "reser
   : (m.type === "jeu" && m.infini) ? "infini" : m.revoir ? "revoir" : null;
 // Contenu d'une page : des sections { cle, titre, liste, pale }
 function contenuPage(i, type = ui.type) {
-  const duType = [...medias.values()].filter(m => m.type === type && correspond(m));
+  const duType = [...medias.values()].filter(m => m.type === type && !m.aVerifier && correspond(m));
   let sections;
   if (i === 0) {
     const choix = catsChoisies(type);
@@ -678,20 +679,27 @@ function zoomDe(vue) {
   const z = reglages.zooms?.[`${ui.type}-${vue === "mosa" ? "mosa" : "liste"}`];
   return vue === "mosa" ? (z >= 2 && z <= 6 ? z : 4) : (z >= 0 && z <= 3 ? z : 1);
 }
-// sens +1 = zoomer (plus gros), -1 = dézoomer (plus petit, plus de titres à l'écran)
-function changerZoom(sens) {
+// pas > 0 = zoomer (plus gros), < 0 = dézoomer (plus petit, plus de titres à l'écran).
+// Renvoie le nombre de crans vraiment faits (0 si on est déjà au bout).
+// depart = échelle de départ de l'animation (pour finir en douceur un pincement), origine = point fixe
+function changerZoom(pas, { depart = null, origine = "50% 0" } = {}) {
   const vue = vueActuelle();
-  if (vue === "tab" || adresse.frise) return;
+  if (vue === "tab" || adresse.frise) return 0;
   const mosa = vue === "mosa", z = zoomDe(vue);
-  const n = mosa ? Math.max(2, Math.min(6, z - sens)) : Math.max(0, Math.min(3, z - sens));
-  if (n === z) return;
+  const n = mosa ? Math.max(2, Math.min(6, z - pas)) : Math.max(0, Math.min(3, z - pas));
+  if (n === z) return 0;
   changerReglage("zooms", { ...(reglages.zooms || {}), [`${ui.type}-${mosa ? "mosa" : "liste"}`]: n });
   // On garde à peu près l'endroit où l'on était dans la liste
   const p = pageAffichee(), ratio = p ? p.scrollTop / Math.max(1, p.scrollHeight - p.clientHeight) : 0;
   rendreContenu();
-  const p2 = pageAffichee();
-  if (p2) { p2.scrollTop = ratio * (p2.scrollHeight - p2.clientHeight); animer(p2.firstElementChild, [{ transform: `scale(${sens > 0 ? .96 : 1.04})`, opacity: .6 }, { transform: "none", opacity: 1 }], { duration: 220, easing: DOUX }); }
+  const p2 = pageAffichee(), el = p2?.firstElementChild;
+  if (p2) p2.scrollTop = ratio * (p2.scrollHeight - p2.clientHeight);
+  if (el) {
+    el.style.transformOrigin = origine;
+    animer(el, [{ transform: `scale(${depart ?? (pas > 0 ? .92 : 1.08)})` }, { transform: "none" }], { duration: 260, easing: DOUX });
+  }
   vibrer();
+  return z - n;
 }
 
 // --- Barre de gauche (PC) ---
@@ -804,7 +812,6 @@ function rendreOnglets() {
 const poserPlaquetteOnglets = () => poserPlaquette("#onglets .oind", "#onglets .og.on");
 
 // --- Le tableau (PC) : on écrit directement dans les cases ---
-const COLS_TABLEAU = ["vg", "titre", "annee", "statut", "note", "coeur", "vu", "support", "tags"];
 function rendreTableau() {
   const { sections, tous } = contenuPage(ui.page);
   const pales = new Set(tous.filter(estPale));
@@ -837,7 +844,7 @@ function evenementsFrise() {
     if (ui.friseTypes.size && !ui.friseTypes.has(m.type)) return;
     m.passages.forEach((p, k) => {
       const d = lireDate(p);
-      if (!d || d.ouvert) return;   // pas encore fini : pas dans la frise
+      if (!d || d.ouvert || m.aVerifier) return;   // pas encore fini (ou pas encore vérifié) : pas dans la frise
       evs.push({ id: m.id, titre: m.titre, type: m.type, enfance: !!d.enfance, mois: d.mois, precision: d.precision, jour: d.jour,
         libelle: d.periode ? texteDate(p, true).replace(/ \d{4}$/, "") : "", debut: d.periode ? d.debut : null, note: m.note, coeur: m.coeur, fois: k + 1, vignette: vignette(m, "fv"), tri: valeurDate(p) });
     });
@@ -902,6 +909,7 @@ function ficheHTML(m) {
     </div>
     <div class="fi-blocs">
       ${pasEncoreVu ? "" : `<div class="bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
+        <button class="et-q ${m.notePlusTard ? "on" : ""}" data-action="note-plustard" aria-pressed="${m.notePlusTard}" title="Je noterai plus tard" aria-label="Je noterai plus tard">?</button>
         <button class="coeur-btn b-coeur ${m.coeur ? "on" : ""}" data-action="coeur" aria-label="Coup de cœur">${ic("coeur")}</button></span></div>`}
       ${saisons}
       ${pasEncoreVu ? "" : `<div class="bloc"><span class="k">${mots.passage}</span><span class="v passages">${passages}<button class="chip plus" data-action="ajout-passage">+ Ajouter</button></span></div>
@@ -1237,7 +1245,7 @@ function rendreFenetre(opts = {}) {
 // Un titre déjà dans ma médiathèque montre son statut : toucher une autre icône le change.
 const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
 const titreNu = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();   // sans ponctuation
-const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && titreNu(x.titre) === titreNu(titre));
+const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && !x.aVerifier && titreNu(x.titre) === titreNu(titre));
 // Même œuvre ? même titre (sans ponctuation) et, si les deux années sont connues, à un an près
 // (« Le Roi lion » 1994 ≠ « Le Roi lion » 2019)
 const memeOeuvre = (titreA, anA, titreB, anB) => titreNu(titreA) === titreNu(titreB) && (!anA || !anB || Math.abs(anA - anB) <= 1);
@@ -1268,20 +1276,6 @@ function ajouterAvecStatut(infos, type, statut, bouton) {
   const sel = bouton && bouton.closest("[data-ligne]")?.dataset.ligne;
   if (sel) animer(document.querySelector(`[data-ligne="${sel}"] .st4 button.on`), [{ transform: "scale(.6)" }, { transform: "scale(1.25)", offset: .55 }, { transform: "none" }], { duration: 380 });
 }
-// (bêta) Garder une fiche de test pour de vrai : on garde le titre et ses infos (année, créateur,
-// genres, affiche) et on efface tout ce qui est perso (notes, dates, support, tags, avis, saisons).
-function garderEtReinitialiser(m, statut) {
-  const avant = structuredClone(m);
-  Object.assign(m, {
-    statut, test: false, revoir: false, note: 0, coeur: false, passages: statut === "encours" ? [`${moisActuel()}/`] : [],
-    support: "", tags: [], avis: "", saisons: { actif: false, total: 0, vues: [] }, cree: Date.now()
-  });
-  ecrireMedia(m);
-  if (pageDuStatut(statut) !== ui.page) allerPage(pageDuStatut(statut));
-  rendreFiche(); rendreContenu();
-  afficherToast(`« ${m.titre} » gardée (${nomStatut(statut, m.type)})`, () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); });
-}
-
 // Après un ajout : listes, fenêtre Ajouter et « Voir aussi » se mettent à jour
 function apresAjout() { majAjout(); majVoirAussi(); majVaDec(); rendreContenu(); }
 
@@ -1412,11 +1406,10 @@ function seg(nom, choix, actuel) {
 }
 function ouvrirReglages() {
   const accent = document.documentElement.dataset.accent;
-  const nbTest = [...medias.values()].filter(m => m.test).length;
   ouvrirVoile("reglages", estPC() ? "centre" : "plein", `<div class="fenetre regl" role="dialog" aria-label="Réglages">
     <div class="fhd"><h2>Réglages</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div class="sect">À trier</div>
-    <div class="groupe"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter ou découvrir, une carte à la fois</small></span><span class="val">bêta${ic("droite")}</span></button></div>
+    <div class="groupe"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter, découvrir, vérifier une liste</small></span><span class="val">${aVerifierListe().length ? `${aVerifierListe().length} à vérifier` : "bêta"}${ic("droite")}</span></button></div>
     <div class="sect">Compte</div>
     <div class="groupe">
       <div class="reg"><span class="resume">${echapper(infoCompte)}</span><span class="synchro"></span></div>
@@ -1444,14 +1437,12 @@ function ouvrirReglages() {
     <div class="deux"><button class="btn" data-action="export">${ic("telecharger", "s")}Exporter</button><button class="btn" data-action="import">${ic("envoyer", "s")}Importer</button></div>
     <input type="file" id="fichier-import" accept=".xlsx" hidden>
     <div class="sect">Données</div>
-    ${compteurHTML(nbTest)}
-    <div class="sect">Données de test</div>
-    <div class="deux"><button class="btn" data-action="test-charger">Charger</button><button class="btn" data-action="test-effacer" ${nbTest ? "" : "disabled"}>Effacer${nbTest ? ` (${nbTest})` : ""}</button></div>
+    ${compteurHTML()}
     <p class="version">${VERSION}</p></div>`);
   majSynchro();
 }
 // Compteur : fiches par type, images gardées, poids des données (et part de l'espace gratuit Firebase)
-function compteurHTML(nbTest) {
+function compteurHTML() {
   const liste = [...medias.values()];
   const parType = TYPES.map(t => `${t.nom} ${liste.filter(m => m.type === t.id).length}`).join(" · ");
   const images = liste.filter(m => m.miniature).length;
@@ -1463,8 +1454,7 @@ function compteurHTML(nbTest) {
     <div class="reg"><span>Fiches</span><span class="val">${liste.length}</span></div>
     <div class="reg"><span class="resume">${parType}</span></div>
     <div class="reg"><span>Images gardées</span><span class="val">${images}</span></div>
-    <div class="reg"><span>Poids</span><span class="val">${poids} · ${partTexte} de l'espace gratuit</span></div>
-    <div class="reg"><span>Fiches de test</span><span class="val">${nbTest}</span></div></div>`;
+    <div class="reg"><span>Poids</span><span class="val">${poids} · ${partTexte} de l'espace gratuit</span></div></div>`;
 }
 function ouvrirTheme() {
   ouvrirVoile("theme", estPC() ? "centre" : "plein", `<div class="fenetre regl" role="dialog" aria-label="Thème">
@@ -1579,7 +1569,7 @@ document.addEventListener("dblclick", e => {
 // (note, date pour la frise, affiche, tags). La carte ne passe qu'avec le bouton « Suivant »
 // (« Précédent » pour revenir) : rien ne bouge tout seul.
 const CHAMPS_TRI = {
-  note:    { nom: "Note",         applique: m => ["fini", "abandon", "encours"].includes(m.statut), manque: m => !m.note },
+  note:    { nom: "Note",         applique: m => ["fini", "abandon", "encours"].includes(m.statut), manque: m => !m.note && !m.notePlusTard },
   date:    { nom: "Date (frise)", applique: m => ["fini", "abandon"].includes(m.statut), manque: m => !m.passages.length },
   affiche: { nom: "Affiche",      applique: () => true, manque: m => !m.image && !m.miniature },
   tags:    { nom: "Tags",         applique: () => true, manque: m => !m.tags.length }
@@ -1588,7 +1578,7 @@ let tri = null;   // { etape: "choix" | "cartes" | "fin", types, champs, ids, i,
 const aCompleter = (m, champs) => [...champs].filter(c => CHAMPS_TRI[c].applique(m) && CHAMPS_TRI[c].manque(m));
 const ficheTri = () => tri && tri.mode !== "decouvrir" && tri.etape === "cartes" ? medias.get(tri.ids[tri.i]) : null;
 function candidatsTri() {
-  return [...medias.values()].filter(m => tri.types.has(m.type) && aCompleter(m, tri.champs).length)
+  return [...medias.values()].filter(m => tri.types.has(m.type) && !m.aVerifier && aCompleter(m, tri.champs).length)
     .sort((a, b) => TYPES.findIndex(t => t.id === a.type) - TYPES.findIndex(t => t.id === b.type) || a.titre.localeCompare(b.titre, "fr"));
 }
 function ouvrirTri() {
@@ -1604,6 +1594,7 @@ function ouvrirTri() {
 function majTri() {
   if (!tri || !$("tri-corps")) return;
   if (tri.mode === "decouvrir") { majDecouvrir(); return; }
+  if (tri.mode === "verifier") { majVerifier(); return; }
   if (tri.etape === "choix") {
     const n = candidatsTri().length;
     $("tri-corps").innerHTML = `${ongletsTri()}<div class="sect">Quoi</div>
@@ -1638,7 +1629,8 @@ function majTri() {
   }
 }
 function blocTri(c, m) {
-  if (c === "note") return `<div class="tri-bloc"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
+  if (c === "note") return `<div class="tri-bloc col"><span class="k">Note</span><span class="v note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= m.note ? "on" : ""}" data-tri-note="${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}
+    <button class="et-q ${m.notePlusTard ? "on" : ""}" data-action="tri-noteq" aria-pressed="${m.notePlusTard}" title="Je noterai plus tard" aria-label="Je noterai plus tard">?</button>
     <button class="coeur-btn ${m.coeur ? "on" : ""}" data-action="tri-coeur" aria-label="Coup de cœur">${ic("coeur")}</button>
     <button class="pastille-rev tri-rev ${m.revoir ? "on" : ""}" data-action="tri-revoir" aria-pressed="${m.revoir}">${ic("rejouer", "s")}${MOTS[m.type].revoir}</button></span></div>
     <div class="tri-bloc col"><span class="k">Avis<span class="tri-ok" id="tri-avis-ok" hidden>${ic("ok", "s")}Enregistré</span></span>
@@ -1659,30 +1651,6 @@ function affichesTriHTML(m) {
   return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
 }
 function majAffichesTri(m) { if ($("tri-affs")) $("tri-affs").innerHTML = affichesTriHTML(m); }
-// Étoiles « vivantes » : elles s'allument en vague (une petite vibration par étoile) et la dernière lance des éclats
-function etoilesVivantes(n) {
-  const etoiles = [...document.querySelectorAll("#tri-carte .note .et.on")];
-  if (!n || !etoiles.length) { vibrer("pas"); return; }
-  vibrer(Array.from({ length: n * 2 - 1 }, (_, k) => k % 2 ? 45 : VIBRATIONS.etoile));
-  etoiles.forEach((s, i) => animer(s, [{ transform: "scale(.6)", opacity: .3 }, { transform: "scale(1.55) rotate(-8deg)", opacity: 1, offset: .5 }, { transform: "none" }],
-    { duration: 380, delay: i * 55, easing: RESSORT, fill: "backwards" }));
-  if (!animOK()) return;
-  const derniere = etoiles[etoiles.length - 1];
-  setTimeout(() => {
-    const r = derniere.getBoundingClientRect();
-    for (let k = 0; k < 8; k++) {
-      const p = document.createElement("i");
-      p.className = "eclat";
-      p.style.left = r.left + r.width / 2 + "px"; p.style.top = r.top + r.height / 2 + "px";
-      document.body.appendChild(p);
-      const a = k / 8 * Math.PI * 2, d = 18 + (k % 2) * 10;
-      const anim = animer(p, [{ transform: "translate(-50%,-50%) scale(1)", opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(a) * d}px), calc(-50% + ${Math.sin(a) * d}px)) scale(.2)`, opacity: 0 }],
-        { duration: 480, easing: "cubic-bezier(.2,.7,.3,1)" });
-      setTimeout(() => p.remove(), 520);
-      if (!anim) p.remove();
-    }
-  }, (etoiles.length - 1) * 55 + 120);
-}
 // Avis enregistré : petite coche « Enregistré » qui apparaît puis s'efface
 function avisEnregistre() {
   const ok = $("tri-avis-ok");
@@ -1722,7 +1690,7 @@ function avancerTri(sens, complete = false) {
 // ni rejetés. Glisser à droite = Vu, à gauche = Pas intéressé ; boutons À voir / Réserve ; « Voir aussi ».
 // Les « pas intéressé » vont dans donnees.rejetes : cachés partout dans l'appli, gardés pour l'Excel.
 let dec = null;   // { file: [{ titre, annee, cat }], i, infos: Map(clé -> résultat en ligne | null), vaOuvert, va, vaOnglet, faits }
-const ongletsTri = () => `<div class="seg tri-modes">${[["completer", "Compléter"], ["decouvrir", "Découvrir"]].map(([k, n]) =>
+const ongletsTri = () => `<div class="seg tri-modes">${[["completer", "Compléter"], ["decouvrir", "Découvrir"], ["verifier", "Vérifier"]].map(([k, n]) =>
   `<button data-tri-mode="${k}" aria-pressed="${(tri.mode || "completer") === k}">${n}</button>`).join("")}</div>`;
 const cleFilm = f => `${f.titre}|${f.annee}`;
 const catsDec = () => new Set(Array.isArray(reglages.decCats) && reglages.decCats.length ? reglages.decCats : ["disney"]);
@@ -1960,8 +1928,8 @@ function finGlisseDec(annule) {
   const { dx, c } = glisseDec;
   glisseDec = null;
   if (Math.abs(dx) >= 6) { bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 60); }
-  if (!annule && dx > 90) actionDec("fini");
-  else if (!annule && dx < -90) actionDec("rejet");
+  if (!annule && dx > 90) tri?.mode === "verifier" ? actionVer(true) : actionDec("fini");
+  else if (!annule && dx < -90) tri?.mode === "verifier" ? actionVer(false) : actionDec("rejet");
   else {
     c.style.transition = `transform .3s ${DOUX}`; c.style.transform = "none";
     c.style.setProperty("--vu", 0); c.style.setProperty("--non", 0);
@@ -1970,6 +1938,150 @@ function finGlisseDec(annule) {
 }
 document.addEventListener("pointerup", () => finGlisseDec(false));
 document.addEventListener("pointercancel", () => finGlisseDec(true));
+
+// ---------- Mode « Vérifier » (Trier mes fiches › Vérifier) ----------
+// Je colle une liste (une ligne par titre, préparée avec Claude) : chaque ligne devient une fiche
+// « à vérifier » (aVerifier), cachée partout ailleurs. Les cartes défilent : droite = valider (la fiche
+// rejoint ma médiathèque), gauche = ignorer (la fiche est effacée). Toucher la carte ouvre la vraie fiche
+// pour tout compléter (statut, note, dates, avis, affiche).
+// Format d'une ligne :  Type | Titre | Année | Statut | Note | Date(s) | Avis   (seul le titre est obligatoire)
+let ver = null;   // { ids, i, hist, bilan, recherche: { fait, total } }
+const aVerifierListe = () => [...medias.values()].filter(m => m.aVerifier).sort((a, b) => a.cree - b.cree);
+const ficheVer = () => ver && tri?.mode === "verifier" && tri.etape === "cartes" ? medias.get(ver.ids[ver.i]) || null : null;
+const MOTS_TYPES = { film: /^films?$/, serie: /^(series?|serie tv|anime|animes)$/, jeu: /^(jeux?|jeu video|jeux video)$/, livre: /^(livres?|bd|manga|mangas|roman|comics?)$/ };
+const MOTS_STATUTS = [[/^(a voir|a jouer|a lire|watchlist|envie)$/, "avoir"], [/^(en cours|commence)$/, "encours"],
+  [/^(vus?|vues?|joues?|lus?|lues?|fini|finis?|termine)$/, "fini"], [/^(reserve|en reserve)$/, "reserve"], [/^(abandon|abandonne|abandonnee)$/, "abandon"]];
+// Une ligne de texte → les infos d'une fiche (ou null si illisible)
+function lireLigneVer(ligne) {
+  const c = ligne.split("|").map(x => x.trim());
+  if (!c.join("")) return null;
+  const typeDuMot = t => Object.keys(MOTS_TYPES).find(k => MOTS_TYPES[k].test(simplifier(t)));
+  let type = typeDuMot(c[0]);
+  if (type) c.shift(); else type = ui.type;
+  const [titre, annee, statutTxt = "", noteTxt = "", datesTxt = "", ...avis] = c;
+  if (!titre) return null;
+  let statut = MOTS_STATUTS.find(([re]) => re.test(simplifier(statutTxt)))?.[1] || (datesTxt || noteTxt ? "fini" : "avoir");
+  if (type === "film" && statut === "encours") statut = "fini";
+  const etoiles = (noteTxt.match(/★/g) || []).length;
+  const note = etoiles || Math.max(0, Math.min(5, parseInt(noteTxt, 10) || 0));
+  const passages = datesTxt.split(";").map(dateDuTexte).filter(Boolean);
+  return { type, titre, annee: +annee || null, statut, note, notePlusTard: noteTxt.trim() === "?", passages, avis: avis.join(" | ") };
+}
+// Coller : crée les fiches à vérifier (sauf celles déjà dans ma liste), puis cherche leurs infos en ligne
+function collerListeVer(texte) {
+  const bilan = { ajoutes: 0, deja: [], illisibles: [] };
+  const nouvelles = [];
+  texte.split(/\r?\n/).forEach((ligne, k) => {
+    if (!ligne.trim()) return;
+    const infos = lireLigneVer(ligne);
+    if (!infos) { bilan.illisibles.push(ligne.trim()); return; }
+    if (dansListe(infos.type, infos.titre, infos.annee) || nouvelles.some(m => m.type === infos.type && memeOeuvre(m.titre, m.annee, infos.titre, infos.annee))) { bilan.deja.push(infos.titre); return; }
+    const m = normaliser(nouvelId(), { ...infos, aVerifier: true, cree: Date.now() + k });
+    nouvelles.push(m);
+  });
+  if (nouvelles.length) ecrireMedias(nouvelles);
+  bilan.ajoutes = nouvelles.length;
+  ver = { ...(ver || {}), bilan };
+  completerVer(nouvelles);
+  majTri();
+}
+// Infos de base cherchées en ligne, une fiche après l'autre (affiche, créateur, genres, année)
+async function completerVer(liste) {
+  if (!liste.length) return;
+  ver.recherche = { fait: 0, total: liste.length };
+  for (const m of liste) {
+    try {
+      // (l'année aide Wikipédia à trouver le bon film ou jeu ; TVmaze et Open Library veulent le titre seul)
+      const res = await chercherEnLigne(m.type, m.type === "film" || m.type === "jeu" ? `${m.titre} ${m.annee || ""}`.trim() : m.titre);
+      const r = res.find(x => memeOeuvre(x.titre, x.annee, m.titre, m.annee)) || res.find(x => titreNu(x.titre) === titreNu(m.titre)) || null;
+      const x = medias.get(m.id);
+      if (r && x) {
+        Object.assign(x, { image: x.image || r.image || "", createur: x.createur || r.createur || "", genres: x.genres.length ? x.genres : (r.genres || []), annee: x.annee || r.annee || null });
+        ecrireMedia(x);
+        if (x.image) copierImage(x.image).then(mini => { const y = medias.get(m.id); if (mini && y) { y.miniature = mini; y.mq = 2; ecrireMedia(y); } });
+        if (ficheVer()?.id === m.id && $("dec-zone")) $("dec-zone").innerHTML = carteVerHTML(x);
+      }
+    } catch (e) { /* pas de réseau : la fiche reste avec ce que j'ai donné */ }
+    ver.recherche.fait++;
+    if (tri?.mode === "verifier" && tri.etape === "choix") majTri();
+  }
+}
+function carteVerHTML(m) {
+  const dates = m.passages.map(p => texteDate(p)).join(" · ");
+  return `<div class="dec-carte ver-carte" id="dec-carte">
+    <span class="dec-etiq vu">Ajouter</span><span class="dec-etiq non">Ignorer</span>
+    <button class="ver-ouvrir" data-action="ver-fiche" aria-label="Ouvrir la fiche pour compléter">
+      ${vignette(m, "dec-aff", true).replace(" loading=\"lazy\"", "")}
+      <h3>${echapper(m.titre)}</h3>
+      <span class="dec-me">${[typeDe(m.type).un, m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}</span>
+      <span class="ver-infos"><span><i class="dot" style="background:var(--st-${m.statut})"></i>${nomStatut(m.statut, m.type)}</span>
+        ${m.note ? etoiles(m.note) : m.notePlusTard ? `<span class="ver-q">note : plus tard</span>` : ""}${m.coeur ? ic("coeur", "coeur") : ""}
+        ${dates ? `<span>${echapper(dates)}</span>` : ""}</span>
+      ${m.avis ? `<span class="ver-avis">« ${echapper(m.avis)} »</span>` : ""}
+      <span class="ver-toucher">${ic("crayon", "s")}Toucher pour compléter</span></button></div>`;
+}
+function majVerifier() {
+  const c = $("tri-corps"), enAttente = aVerifierListe().length;
+  if (tri.etape === "choix") {
+    const b = ver?.bilan, r = ver?.recherche;
+    c.innerHTML = `${ongletsTri()}<div class="sect">Coller une liste</div>
+      <textarea id="ver-texte" class="ver-texte" rows="6" placeholder="Film | Titre | Année | Statut | Note | Date | Avis" spellcheck="false"></textarea>
+      <button class="btn plein" data-action="ver-coller">${ic("plus", "s")}Ajouter à vérifier</button>
+      ${b ? `<p class="ver-bilan">${b.ajoutes} ajouté${b.ajoutes > 1 ? "s" : ""}${b.deja.length ? ` · déjà dans ta liste : ${b.deja.map(echapper).join(", ")}` : ""}${b.illisibles.length ? ` · lignes illisibles : ${b.illisibles.map(echapper).join(" / ")}` : ""}</p>` : ""}
+      ${r && r.fait < r.total ? `<p class="ver-bilan">Recherche des affiches et infos… ${r.fait} / ${r.total}</p>` : ""}
+      <p class="tri-compte">${enAttente ? `${enAttente} titre${enAttente > 1 ? "s" : ""} à vérifier` : "Rien à vérifier"}</p>
+      <button class="btn pri tri-go" data-action="ver-go" ${enAttente ? "" : "disabled"}>Commencer</button>`;
+    return;
+  }
+  const m = ficheVer();
+  if (!m) {
+    c.innerHTML = `<div class="tri-fin"><b>C'est vérifié</b><p>${ver.faits} titre${ver.faits > 1 ? "s" : ""} ajouté${ver.faits > 1 ? "s" : ""}.</p>
+      ${ver.hist.length ? `<p><button class="btn" data-action="ver-retour">${ic("rejouer", "s")}Revenir au dernier</button></p>` : ""}
+      <div class="deux"><button class="btn" data-action="ver-encore">Coller une autre liste</button><button class="btn pri" data-action="fermer">Fermer</button></div></div>`;
+    return;
+  }
+  const n = ver.ids.length;
+  c.innerHTML = `<div class="tri-prog"><span>${ver.i + 1} / ${n}</span><i><b style="width:${Math.round(ver.i / n * 100)}%"></b></i></div>
+    <div id="dec-zone">${carteVerHTML(m)}</div>
+    <div class="dec-ronds">
+      <button class="dec-rond petit retour" data-action="ver-retour" aria-label="Revenir au précédent" ${ver.hist.length ? "" : "disabled"}>${ic("rejouer", "s")}<small>Retour</small></button>
+      <button class="dec-rond non" data-ver="non" aria-label="Ignorer">${ic("x")}<small>Ignorer</small></button>
+      <button class="dec-rond vu" data-ver="oui" aria-label="Ajouter">${ic("ok")}<small>Ajouter</small></button></div>`;
+}
+function lancerVerifier() {
+  ver = { ...(ver || {}), ids: aVerifierListe().map(m => m.id), i: 0, hist: [], faits: 0 };
+  tri.etape = "cartes";
+  majTri();
+}
+// Valider (oui = true) ou ignorer la carte affichée
+function actionVer(oui) {
+  const m = ficheVer();
+  if (!m) return;
+  const copie = structuredClone(m);
+  if (oui) { m.aVerifier = false; m.cree = Date.now(); ecrireMedia(m); } else effacerMedias([m.id]);
+  const h = { i: ver.i, oui, annuler: () => { medias.set(copie.id, copie); ecrireMedia(copie); } };
+  ver.hist.push(h);
+  if (oui) ver.faits++;
+  afficherToast(`« ${m.titre} » : ${oui ? "ajouté" : "ignoré"}`, () => { if (ver.hist[ver.hist.length - 1] === h) retourVer(); });
+  rendreContenu();
+  const carte = $("dec-carte");
+  const suite = () => { ver.i++; majTri(); animer($("dec-carte"), [{ opacity: 0, transform: "scale(.92)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: DOUX }); };
+  const a = animer(carte, [{ transform: carte?.style.transform || "none", opacity: 1 }, { transform: oui ? "translateX(130%) rotate(12deg)" : "translateX(-130%) rotate(-12deg)", opacity: 0 }],
+    { duration: 260, easing: "ease-in", fill: "forwards" });
+  if (a) setTimeout(suite, 270); else suite();
+  vibrer(oui ? "vu" : "non");
+}
+function retourVer() {
+  const h = ver?.hist.pop();
+  if (!h) return;
+  h.annuler();
+  if (h.oui) ver.faits = Math.max(0, ver.faits - 1);
+  ver.i = h.i;
+  rendreContenu();
+  majTri();
+  animer($("dec-carte"), [{ opacity: 0, transform: "translateX(-70%) rotate(-8deg)" }, { opacity: 1, transform: "none" }], { duration: 340, easing: RESSORT });
+  vibrer("pas");
+}
 
 // --- Nom complet d'un résultat (Ajouter, Voir aussi) : appui long = petite bulle (PC : survol) ---
 let appuiLong = null;
@@ -2091,12 +2203,21 @@ function finGlisse() {
 $("contenu").addEventListener("pointerup", finGlisse);
 $("contenu").addEventListener("pointercancel", finGlisse);
 
-// Pincer à deux doigts : écarter = zoomer, rapprocher = dézoomer (un cran à chaque fois)
+// Pincer à deux doigts : pendant le geste, la liste grossit / rétrécit en suivant les doigts (sans
+// rien redessiner, donc fluide) ; au lâcher, elle se cale sur le niveau le plus proche.
 let pince = null;
 const ecart = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+const CRAN = 1.25;   // écarter les doigts de 25 % = un cran de zoom
 $("contenu").addEventListener("touchstart", e => {
-  if (e.touches.length !== 2 || adresse.frise) return;
-  pince = { d0: ecart(e.touches) };
+  if (e.touches.length !== 2 || adresse.frise || vueActuelle() === "tab") return;
+  const el = pageAffichee()?.firstElementChild;
+  if (!el) return;
+  // Point fixe du zoom : entre les deux doigts
+  const r = el.getBoundingClientRect();
+  const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+  pince = { d0: ecart(e.touches), el, echelle: 1, origine: `${cx - r.left}px ${cy - r.top}px` };
+  el.style.transformOrigin = pince.origine;
+  el.style.willChange = "transform";
   // (le 2e doigt ne doit pas faire glisser les pages)
   if (glisse?.actif) { const p = $("piste"), vis = pagesDe(ui.type); p.style.transition = `transform .3s ${DOUX}`; p.style.transform = `translateX(${-vis.indexOf(ui.page) * 100 / vis.length}%)`; }
   glisse = null;
@@ -2104,11 +2225,24 @@ $("contenu").addEventListener("touchstart", e => {
 $("contenu").addEventListener("touchmove", e => {
   if (!pince || e.touches.length !== 2) return;
   e.preventDefault();
-  const r = ecart(e.touches) / pince.d0;
-  if (r > 1.28) { changerZoom(+1); pince.d0 = ecart(e.touches); }
-  else if (r < .78) { changerZoom(-1); pince.d0 = ecart(e.touches); }
+  pince.echelle = Math.max(.45, Math.min(2.2, ecart(e.touches) / pince.d0));
+  pince.el.style.transform = `scale(${pince.echelle})`;
 }, { passive: false });
-$("contenu").addEventListener("touchend", e => { if (e.touches.length < 2) { if (pince) { bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 250); } pince = null; } });
+$("contenu").addEventListener("touchend", e => {
+  if (e.touches.length >= 2 || !pince) return;
+  const { el, echelle, origine } = pince;
+  pince = null;
+  bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 250);
+  el.style.willChange = "";
+  // Nombre de crans selon l'écartement des doigts
+  const pas = echelle >= 1 ? Math.floor(Math.log(echelle) / Math.log(CRAN) + .25) : -Math.floor(Math.log(1 / echelle) / Math.log(CRAN) + .25);
+  const fait = pas ? changerZoom(pas, { depart: echelle / Math.pow(CRAN, pas), origine }) : 0;
+  if (!fait) {
+    // Pas assez pincé (ou déjà au bout) : la liste revient à sa taille en douceur
+    animer(el, [{ transform: `scale(${echelle})` }, { transform: "none" }], { duration: 240, easing: DOUX });
+    el.style.transform = "";
+  }
+});
 // PC : Ctrl + molette sur la liste
 let dernierZoomMolette = 0;
 $("contenu").addEventListener("wheel", e => {
@@ -2356,22 +2490,17 @@ document.addEventListener("click", e => {
       return;
     }
     // --- Fiche ---
+    case "note-plustard": if (m) majFiche(m, x => { x.notePlusTard = !x.notePlusTard; if (x.notePlusTard) x.note = 0; }); return;
     case "menu-fiche": {
       if (!m) return;
-      // (bêta) « Garder et réinitialiser » : seulement pour une fiche venue des données de test
       const choix = [
         { id: "modifier", html: `${ic("crayon", "s")}Modifier` },
-        ...(m.test ? [{ id: "garder", html: `${ic("ok", "s")}<span>Garder et réinitialiser<small>bêta · efface notes, dates, tags…</small></span>` }] : []),
         { id: "supprimer", html: `${ic("poubelle", "s")}Supprimer`, danger: true }
       ];
       ouvrirMenu(el, choix, i => {
         const c = choix[i].id;
         if (c === "modifier") location.replace("#modifier=" + m.id);
-        else if (c === "garder") {
-          // On demande dans quel statut la fiche repart
-          setTimeout(() => ouvrirMenu(el, [{ titre: "Repartir en…" }, ...statutsDe(m.type).map(s => ({ html: `<i class="dot" style="background:var(--st-${s})"></i>${nomStatut(s, m.type)}` }))],
-            k => garderEtReinitialiser(m, statutsDe(m.type)[k - 1])), 160);
-        } else {
+        else {
           effacerMedias([m.id]);
           retour();
           afficherToast("Fiche supprimée", () => { ecrireMedia(m); rafraichir(); });
@@ -2457,8 +2586,6 @@ document.addEventListener("click", e => {
     case "notes": NotesIdees.ouvrir(donnees.idees, texte => { donnees.idees = texte; sauverDonnees(); }); return;
     case "export": exporterExcel(); return;
     case "import": $("fichier-import").click(); return;
-    case "test-charger": chargerTest(); return;
-    case "test-effacer": effacerTest(); return;
     case "ajout-support":
       donnees.supports.push("Nouveau"); sauverDonnees(); ouvrirSupports();
       { const champs = document.querySelectorAll("[data-sup]"); champs[champs.length - 1]?.select(); }
@@ -2467,7 +2594,7 @@ document.addEventListener("click", e => {
 
   if (d.note && m) {
     const n = +d.note === m.note ? 0 : +d.note;   // retoucher la même étoile l'enlève
-    majFiche(m, x => { x.note = n; });
+    majFiche(m, x => { x.note = n; x.notePlusTard = false; });
     document.querySelectorAll(".note .et.on").forEach((s, i) => animer(s, [{ transform: "scale(1)" }, { transform: "scale(1.4)", offset: .45 }, { transform: "scale(1)" }], { duration: 360, delay: i * 45 }));
     return;
   }
@@ -2490,6 +2617,13 @@ document.addEventListener("click", e => {
     if (d.dec) { actionDec(d.dec); return; }
     if (d.action === "dec-va") { basculerVaDec(); return; }
     if (d.action === "dec-retour") { retourDec(); return; }
+    // Mode Vérifier
+    if (d.action === "ver-coller") { const t = $("ver-texte")?.value || ""; if (t.trim()) collerListeVer(t); return; }
+    if (d.action === "ver-go") { lancerVerifier(); return; }
+    if (d.action === "ver-encore") { tri.etape = "choix"; majTri(); return; }
+    if (d.ver) { actionVer(d.ver === "oui"); return; }
+    if (d.action === "ver-retour") { retourVer(); return; }
+    if (d.action === "ver-fiche") { const m = ficheVer(); if (m) { tri.reprendre = true; aller(adresseFiche(m.id)); } return; }
     // Affiche de la carte : enlever / choisir une autre
     if (d.action === "dec-aff-suppr") { changerAffDec(""); return; }
     if (d.action === "dec-aff-modif") { ouvrirAffDec(); return; }
@@ -2505,7 +2639,8 @@ document.addEventListener("click", e => {
     if (d.action === "tri-precedent") { if (tri.i > 0) avancerTri(-1); return; }
     if (d.action === "tri-suivant") { avancerTri(1, mt && !aCompleter(mt, tri.champs).length); return; }
     if (mt) {
-      if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; }); etoilesVivantes(n); return; }
+      if (d.triNote) { const n = +d.triNote === mt.note ? 0 : +d.triNote; majFicheTri(mt, x => { x.note = n; x.notePlusTard = false; }); vibrer("etoile"); return; }
+      if (d.action === "tri-noteq") { majFicheTri(mt, x => { x.notePlusTard = !x.notePlusTard; if (x.notePlusTard) x.note = 0; }); vibrer("pas"); return; }
       // Toucher l'affiche ou le titre : ouvre la fiche (on revient à la même carte en la fermant)
       if (d.action === "tri-fiche") { tri.reprendre = true; aller(adresseFiche(mt.id)); return; }
       if (d.action === "tri-coeur") { majFicheTri(mt, x => { x.coeur = !x.coeur; }); return; }
@@ -2606,10 +2741,8 @@ document.addEventListener("click", e => {
   // Tableau (PC) : clic sur une case = la modifier
   if (el.matches("td[data-col]")) { cliqueCase(el); return; }
 });
-// Le fond (listes) se met à jour derrière la fenêtre d'ajout
-function rafraichirFond() { rendreContenu(); }
 
-// Petits effets : éclats autour du cœur, interrupteur qui s'étire
+// Petit effet : éclats autour du cœur
 function eclatsCoeur(boutons) {
   if (!animOK()) return;
   boutons.forEach(b => {
@@ -2621,9 +2754,6 @@ function eclatsCoeur(boutons) {
       setTimeout(() => p.remove(), 520);
     }
   });
-}
-function etirer() {
-  document.querySelectorAll('.tog[data-action="revoir"]').forEach(t => { t.classList.add("etire"); setTimeout(() => t.classList.remove("etire"), 180); });
 }
 
 // Saisie : recherche, ajout, fiche (tags, avis, support), supports, nouveau titre du tableau
@@ -2815,19 +2945,19 @@ $("fab").addEventListener("click", () => {
 });
 addEventListener("resize", () => { poserPlaquetteOnglets(); poserPastilleVues(); poserTraitStatut(); });
 
-// ---------- 10. Excel et données de test ----------
+// ---------- 10. Excel ----------
 // Feuille « Médias » (une ligne par fiche, avec une miniature de l'affiche) et feuille « Supports ».
 const COLONNES = [
   { header: "Affiche", key: "affiche", width: 7 }, { header: "Type", key: "type", width: 8 },
   { header: "Titre", key: "titre", width: 36 }, { header: "Année", key: "annee", width: 8 },
   { header: "Créateur", key: "createur", width: 24 }, { header: "Statut", key: "statut", width: 12 },
-  { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7 }, { header: "Note", key: "note", width: 7 },
+  { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7 }, { header: "Note", key: "note", width: 7 }, { header: "Note plus tard", key: "notePlusTard", width: 13 },
   { header: "Coup de cœur", key: "coeur", width: 12 }, { header: "Vu", key: "vu", width: 26 },
   { header: "Support", key: "support", width: 14 },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
   { header: "Saisons", key: "saisons", width: 9 }, { header: "Avis", key: "avis", width: 40 },
-  { header: "Image", key: "image", width: 30 }, { header: "Affiche choisie", key: "afficheChoisie", width: 14 },
-  { header: "Ajouté le", key: "ajoute", width: 12 }, { header: "Test", key: "test", width: 6 }
+  { header: "Image", key: "image", width: 30 }, { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
+  { header: "Ajouté le", key: "ajoute", width: 12 }
 ];
 const COLONNES_REJETES = [
   { header: "Type", key: "type", width: 8 }, { header: "Titre", key: "titre", width: 40 }, { header: "Année", key: "annee", width: 8 },
@@ -2844,11 +2974,11 @@ async function exporterExcel() {
     const liste = [...medias.values()].sort((a, b) => ordreType(a.type) - ordreType(b.type) || STATUTS.indexOf(a.statut) - STATUTS.indexOf(b.statut) || a.titre.localeCompare(b.titre, "fr"));
     const ws = ajouterFeuille(classeur, "Médias", COLONNES, liste.map(m => ({
       affiche: "", type: typeDe(m.type).un, titre: m.titre, annee: m.annee || "", createur: m.createur,
-      statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", coeur: ouiNon(m.coeur),
+      statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", notePlusTard: ouiNon(m.notePlusTard), coeur: ouiNon(m.coeur),
       vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
       genres: m.genres.join(", "), tags: m.tags.join(", "),
       saisons: m.saisons.actif ? `${m.saisons.vues.length}/${m.saisons.total}` : "", avis: m.avis,
-      image: m.image, afficheChoisie: ouiNon(m.afficheChoisie), ajoute: dateCourte(m.cree), test: ouiNon(m.test)
+      image: m.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
     })));
     // Miniatures dans la 1re colonne
     liste.forEach((m, i) => {
@@ -2898,12 +3028,12 @@ async function importerExcel(champ) {
       const ajoute = Date.parse(l["Ajouté le"]);
       return normaliser(a ? a.id : nouvelId(), {
         type, titre: l["Titre"], annee: l["Année"], createur: l["Créateur"], statut: statutDuTexte(l["Statut"], type),
-        revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], coeur: simplifier(l["Coup de cœur"]) === "oui",
+        revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], notePlusTard: simplifier(l["Note plus tard"]) === "oui", coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui",
+        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
         saisons: saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
-        test: simplifier(l["Test"]) === "oui", cree: a?.cree || (isNaN(ajoute) ? maintenant - i : ajoute)
+        cree: a?.cree || (isNaN(ajoute) ? maintenant - i : ajoute)
       });
     });
     const avant = [...medias.values()], avantSupports = [...donnees.supports], avantRejetes = [...donnees.rejetes];
@@ -2932,23 +3062,6 @@ async function copierMiniaturesManquantes(liste) {
     if (mini && actuelle) { actuelle.miniature = mini; actuelle.mq = 2; ecrireMedia(actuelle); }
   }
   rafraichir();
-}
-function chargerTest() {
-  if (!confirm("Ajouter 200 fiches de test (50 par type) ? Elles s'effacent en un clic ensuite.")) return;
-  // (normaliser : les « débuts » de test deviennent des périodes, comme pour les vraies fiches)
-  const liste = genererDonneesTest(nouvelId).map(m => normaliser(m.id, m));
-  ecrireMedias(liste);
-  const nouveaux = [...new Set(liste.map(m => m.support).filter(Boolean))].filter(s => !donnees.supports.includes(s));
-  if (nouveaux.length) { donnees.supports.push(...nouveaux); sauverDonnees(); }
-  retour();
-  afficherToast(`${liste.length} fiches de test ajoutées`);
-}
-function effacerTest() {
-  const liste = [...medias.values()].filter(m => m.test);
-  if (!liste.length || !confirm(`Effacer les ${liste.length} fiches de test ? Tes vraies fiches ne sont pas touchées.`)) return;
-  effacerMedias(liste.map(m => m.id));
-  retour();
-  afficherToast("Données de test effacées", () => { ecrireMedias(liste); rafraichir(); });
 }
 
 // Lien reçu via le menu « Partager » d'Android (…/?title=…&text=…&url=…) : on ouvre « Ajouter »
