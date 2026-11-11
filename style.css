@@ -828,3 +828,79 @@ button.tri-tete:active { background: var(--hover); transform: scale(.985); trans
 .ver-q { color: var(--muted); font-style: italic; }
 .ver-avis { margin-top: 8px; font-size: 13px; color: var(--muted); font-style: italic; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .ver-toucher { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--acc); font-weight: 500; }
+
+/* =========================================================
+   v0.10.1 : sagas (piles), saisons, courts & anthologies
+   ========================================================= */
+/* Bouton « pile » de la barre d'outils (groupé / séparé) */
+.pile-btn { width: 34px; height: 32px; flex-shrink: 0; display: grid; place-items: center; border-radius: var(--r); background: var(--surface); box-shadow: var(--ob); color: var(--muted);
+  transition: transform .38s var(--ressort), background-color .2s, color .2s; }
+.pile-btn.on { background: var(--acc-soft); color: var(--acc); }
+.pile-btn:active { transform: scale(.9); transition-duration: .08s; }
+body.pc .pile-btn { height: 28px; box-shadow: none; border: 1px solid var(--line); }
+/* Pile (liste) : la couverture avec deux cartes décalées derrière + nombre de tomes */
+.pile-vg { position: relative; flex-shrink: 0; width: 44px; height: 58px; }
+.pile-vg .vg { position: absolute; left: 0; top: 4px; z-index: 3; box-shadow: 2px 2px 4px rgba(var(--oc), .35); }
+.pile-vg::before, .pile-vg::after { content: ""; position: absolute; width: 36px; height: 54px; border-radius: var(--rp); border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.pile-vg::before { left: 8px; top: 0; background: color-mix(in srgb, var(--muted) 35%, var(--bg)); z-index: 1; }
+.pile-vg::after { left: 4px; top: 2px; background: color-mix(in srgb, var(--muted) 55%, var(--bg)); z-index: 2; }
+.nb { position: absolute; right: -3px; bottom: -3px; z-index: 4; min-width: 17px; padding: 1px 5px; border-radius: 9px; background: var(--acc); color: var(--acc-ink); font-size: 10px; font-weight: 800; text-align: center; line-height: 1.4; }
+.it.pile .chev { color: var(--faint); transition: transform .3s var(--doux); }
+.pile-bloc.ouverte .it.pile .chev { transform: rotate(180deg); }
+.liste:not(.compacte).z0 .pile-vg { width: 58px; height: 79px; }
+.liste:not(.compacte).z0 .pile-vg .vg { width: 50px; height: 75px; }
+.liste:not(.compacte).z0 .pile-vg::before, .liste:not(.compacte).z0 .pile-vg::after { width: 50px; height: 75px; }
+.compacte .pile-vg, .liste.z2 .pile-vg, .liste.z3 .pile-vg { width: 32px; height: 40px; }
+.compacte .pile-vg .vg, .liste.z2 .pile-vg .vg, .liste.z3 .pile-vg .vg { width: 26px; height: 36px; top: 3px; }
+.compacte .pile-vg::before, .compacte .pile-vg::after, .liste.z2 .pile-vg::before, .liste.z2 .pile-vg::after, .liste.z3 .pile-vg::before, .liste.z3 .pile-vg::after { width: 26px; height: 36px; }
+.liste.z3 .pile-bloc, .liste.z3 .sous { grid-column: 1 / -1; }
+/* Petite barre « où j'en suis » (une case par tome) et bandeau des saisons (une case par saison) */
+.prog, .bandeau { display: flex; gap: 2px; margin-top: 4px; max-width: 160px; }
+.prog i, .bandeau i { flex: 1; min-width: 4px; max-width: 18px; height: 4px; border-radius: 2px; background: var(--line); }
+.b-fini { background: var(--st-fini) !important; }
+.b-encours { background: var(--st-encours) !important; }
+.b-avoir { background: var(--st-avoir) !important; opacity: .55; }
+.b-reserve { background: var(--st-reserve) !important; opacity: .5; }
+.b-abandon, .b-arrete { background: var(--faint) !important; opacity: .55; }
+.bandeau { max-width: 200px; }
+.bande-txt { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.liste.z3 .bande-txt, .compacte .bande-txt { display: none; }
+.ruban { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9px; white-space: nowrap; background: color-mix(in srgb, var(--st-encours) 20%, transparent); color: var(--st-encours); }
+.liste.z3 .ruban { display: none; }
+/* Pile déroulée : la barre de la saga puis les tomes, en retrait */
+.sous { margin: 0 0 6px 18px; padding-left: 12px; border-left: 2px solid var(--acc); }
+.sous .it .vg { width: 28px; height: 42px; }
+.sous .it::after { left: 38px; }
+.saga-barre { display: flex; align-items: center; gap: 6px; padding: 6px 0 4px; }
+.saga-barre .note .et { font-size: 17px; }
+.btn-mini { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 9px; border-radius: 14px; background: var(--sunk); color: var(--muted); font-size: 12px; }
+.pastille-st-mini { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 9px; white-space: nowrap; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
+/* Mosaïque : pile = ombres de cartes derrière ; déroulée = les tomes sur toute la largeur */
+.mc.pile .vg { box-shadow: 3px 3px 0 color-mix(in srgb, var(--muted) 55%, var(--bg)), 6px 6px 0 color-mix(in srgb, var(--muted) 35%, var(--bg)); }
+.mc.pile .nb { top: 4px; bottom: auto; right: 4px; }
+.mc.pile.ouverte .vg { outline: 2px solid var(--acc); outline-offset: 2px; }
+.mosa-sous { grid-column: 1 / -1; padding: 6px 8px 10px; border-radius: 8px; background: var(--sunk); }
+.mosa-sous-g { display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); gap: 10px 6px; }
+.mc .bandeau { margin: 4px 0 0; max-width: none; }
+.mc-s { position: absolute; top: 4px; left: 4px; z-index: 2; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 8px; background: rgba(15, 18, 26, .7); color: #fff; }
+.num-s { font-size: 12px; font-weight: 700; color: var(--acc); }
+/* Fiche : ligne « Saga » */
+.fi-saga { display: inline-flex; align-items: center; gap: 4px; color: var(--acc); font-weight: 500; }
+/* Fiche d'une série : une ligne par saison (image, étoiles, dates, statut) */
+.saisons-l { display: flex; flex-direction: column; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.saison-l { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.saison-img { position: relative; flex-shrink: 0; border-radius: var(--rp); }
+.saison-img .s-vg { width: 34px; height: 51px; }
+.s-n { position: absolute; left: 2px; bottom: 2px; z-index: 2; font-size: 10px; font-weight: 800; padding: 0 4px; border-radius: 6px; background: rgba(15, 18, 26, .72); color: #fff; }
+.saison-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.saison-mid .note .et { font-size: 17px; }
+.saison-dates { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.saison-st { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px 0 9px; border-radius: 13px; font-size: 11.5px; font-weight: 700; }
+.saison-st .ic { width: 12px; height: 12px; }
+.st-fini { color: var(--st-fini); background: color-mix(in srgb, var(--st-fini) 18%, transparent); }
+.st-encours { color: var(--st-encours); background: color-mix(in srgb, var(--st-encours) 18%, transparent); }
+.st-avoir { color: var(--st-avoir); background: color-mix(in srgb, var(--st-avoir) 16%, transparent); }
+.st-arrete { color: var(--muted); background: var(--sunk); }
+.saisons-bas { display: flex; gap: 6px; padding-top: 8px; }
+.dot.b-avoir, .dot.b-arrete { opacity: 1 !important; }
+.dot.b-arrete { background: var(--faint) !important; }

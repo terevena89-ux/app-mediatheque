@@ -24,20 +24,22 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lireFeuille } from "./excel-style.js";
-import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier, dateDeSortie } from "./sources.js";
+import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier, dateDeSortie, infosSaga, saisonsTVmaze } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
 import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.0";
+const VERSION = "v0.10.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
   { id: "jeu", nom: "Jeux", un: "Jeu" },
   { id: "film", nom: "Films", un: "Film" },
   { id: "serie", nom: "Séries", un: "Série" },
-  { id: "livre", nom: "Livres", un: "Livre" }
+  { id: "livre", nom: "Livres", un: "Livre" },
+  // Courts métrages + épisodes de séries d'anthologie (Black Mirror…) : caché sous l'onglet Séries (appui long)
+  { id: "court", nom: "Courts & anthologies", un: "Court", court: "Courts" }
 ];
 const typeDe = id => TYPES.find(t => t.id === id) || TYPES[1];
 
@@ -46,7 +48,8 @@ const MOTS = {
   film:  { avoir: "À voir",   fini: "Vu",   vus: "Vus",   passage: "Vu",   revoir: "À revoir" },
   serie: { avoir: "À voir",   fini: "Vue",  vus: "Vues",  passage: "Vu",   revoir: "À revoir" },
   jeu:   { avoir: "À jouer",  fini: "Fini", vus: "Joués", passage: "Joué", revoir: "À rejouer" },
-  livre: { avoir: "À lire",   fini: "Lu",   vus: "Lus",   passage: "Lu",   revoir: "À relire" }
+  livre: { avoir: "À lire",   fini: "Lu",   vus: "Lus",   passage: "Lu",   revoir: "À relire" },
+  court: { avoir: "À voir",   fini: "Vu",   vus: "Vus",   passage: "Vu",   revoir: "À revoir" }
 };
 const STATUTS = ["avoir", "encours", "fini", "reserve", "abandon"];
 function nomStatut(s, type) {
@@ -64,8 +67,10 @@ const couleurPage = i => `var(--st-${["avoir", "encours", "fini"][i]})`;
 const pageDuStatut = s => s === "encours" ? 1 : (s === "fini" || s === "abandon") ? 2 : 0;
 // Les films n'ont pas de statut « En cours » (un film se regarde d'une traite) : 2 pages seulement.
 // Les numéros de page restent 0 (À voir), 1 (En cours), 2 (Vus) ; « pagesDe » dit lesquelles existent.
-const pagesDe = type => type === "film" ? [0, 2] : [0, 1, 2];
-const statutsDe = type => type === "film" ? STATUTS.filter(s => s !== "encours") : STATUTS;
+// Films et courts se regardent d'une traite : pas de statut « En cours »
+const dUneTraite = type => type === "film" || type === "court";
+const pagesDe = type => dUneTraite(type) ? [0, 2] : [0, 1, 2];
+const statutsDe = type => dUneTraite(type) ? STATUTS.filter(s => s !== "encours") : STATUTS;
 const pageValide = () => { if (!pagesDe(ui.type).includes(ui.page)) ui.page = 0; };
 
 const TRIS = [
@@ -227,18 +232,18 @@ function dateDuTexte(t) {
 
 // ---------- 2. Les données ----------
 // Une fiche = { id, type, titre, annee, createur, genres[], image, miniature, statut, revoir, note, coeur,
-//               passages[], support, tags[], avis, saisons { actif, total, vues[] }, cree }
+//               passages[], support, tags[], avis, saisons { actif, liste[] }, saga, tome, cree }
 //   image     : adresse de l'affiche sur le web
 //   miniature : petite copie de l'affiche (~10 Ko) gardée dans la fiche
 //   passages  : dates ou périodes où je l'ai vu / joué / lu (plusieurs si revu) ;
 //               « 2025-03/ » = commencé en mars, pas encore fini (posé tout seul en passant « En cours »)
 let medias = new Map();
-let donnees = { supports: [...SUPPORTS_DEPART], idees: "", rejetes: [] };
+let donnees = { supports: [...SUPPORTS_DEPART], idees: "", rejetes: [], sagas: [], sagasRassemblees: false };
 
 function normaliser(id, d) {
   const liste = v => Array.isArray(v) ? [...new Set(v.map(x => String(x || "").trim()).filter(Boolean))] : [];
   const s = d.saisons || {};
-  return {
+  const m = {
     id,
     type: TYPES.some(t => t.id === d.type) ? d.type : "film",
     titre: String(d.titre || "").trim().slice(0, 200),
@@ -253,22 +258,29 @@ function normaliser(id, d) {
     afficheChoisie: !!d.afficheChoisie,
     // true = ajoutée par « Trier › Vérifier » et pas encore validée : cachée partout ailleurs
     aVerifier: !!d.aVerifier,
+    // Saga : identifiant de la saga, numéro de tome ; wd = identifiant Wikidata de l'œuvre (gardé pour ne pas le rechercher) ;
+    // sagaCherchee = la recherche automatique a déjà été faite ; sagaManuel = j'ai choisi moi-même (on n'y touche plus)
+    saga: String(d.saga || ""), tome: Number.isFinite(+d.tome) && +d.tome > 0 ? +d.tome : null, wd: String(d.wd || ""),
+    sagaCherchee: !!d.sagaCherchee, sagaManuel: !!d.sagaManuel,
     // (v0.9.2 : un film « En cours » passe en « Vu » ; sa période « depuis … » devient sa date de visionnage)
-    statut: STATUTS.includes(d.statut) ? (d.type === "film" && d.statut === "encours" ? "fini" : d.statut) : "avoir",
+    statut: STATUTS.includes(d.statut) ? (dUneTraite(d.type) && d.statut === "encours" ? "fini" : d.statut) : "avoir",
     revoir: !!d.revoir,
     infini: d.type === "jeu" && !!d.infini && !d.revoir,   // jeux : « Infini ∞ » = toujours bon pour une petite partie
     note: Math.max(0, Math.min(5, Math.round(+d.note || 0))),
     // « ? » : je ne peux pas noter pour l'instant (le mode Trier ne la redemande plus)
     notePlusTard: !d.note && !!d.notePlusTard,
     coeur: !!d.coeur,
-    passages: fusionnerDebut(liste(d.passages).map(migrerDate).map(p => d.type === "film" && p.endsWith("/") ? p.slice(0, -1) : p).filter(dateValide),
-      lireBout(String(d.debut || "")) ? d.debut : "", d.type === "film" && d.statut === "encours" ? "fini" : d.statut),
+    passages: fusionnerDebut(liste(d.passages).map(migrerDate).map(p => dUneTraite(d.type) && p.endsWith("/") ? p.slice(0, -1) : p).filter(dateValide),
+      lireBout(String(d.debut || "")) ? d.debut : "", dUneTraite(d.type) && d.statut === "encours" ? "fini" : d.statut),
     support: String(d.support || "").trim(),
     tags: liste(d.tags),
     avis: String(d.avis || ""),
-    saisons: { actif: !!s.actif, total: Math.max(0, Math.round(+s.total || 0)), vues: (Array.isArray(s.vues) ? s.vues : []).map(Number).filter(n => n > 0) },
+    saisons: lireSaisons(s, d.statut),
     cree: typeof d.cree === "number" ? d.cree : 0
   };
+  // Série suivie par saison : son statut se déduit de celui de ses saisons
+  if (suiviSaisons(m)) m.statut = statutSerie(m);
+  return m;
 }
 function normaliserDonnees(d) {
   let supports = Array.isArray(d.supports) ? d.supports.map(String).filter(Boolean) : [...SUPPORTS_DEPART];
@@ -282,8 +294,83 @@ function normaliserDonnees(d) {
     // « Pas intéressé » (mode Découvrir) : invisibles dans l'appli, gardés pour ne plus les proposer
     // et pour l'onglet de l'export Excel. { type, titre, annee, cat, date }
     rejetes: (Array.isArray(d.rejetes) ? d.rejetes : []).filter(r => r && r.titre).map(r => ({
-      type: TYPES.some(t => t.id === r.type) ? r.type : "film", titre: String(r.titre), annee: +r.annee || null, cat: String(r.cat || ""), date: String(r.date || "") }))
+      type: TYPES.some(t => t.id === r.type) ? r.type : "film", titre: String(r.titre), annee: +r.annee || null, cat: String(r.cat || ""), date: String(r.date || "") })),
+    // Sagas (tomes d'une même série) : { id, type, nom, image (affiche choisie, sinon celle du tome 1),
+    // note (la note de la saga, indépendante des tomes), wd (identifiant Wikidata de la série) }
+    sagas: (Array.isArray(d.sagas) ? d.sagas : []).filter(s => s && s.id && s.nom).map(s => ({
+      id: String(s.id), type: TYPES.some(t => t.id === s.type) ? s.type : "livre", nom: String(s.nom).slice(0, 120),
+      image: lienValide(s.image), note: Math.max(0, Math.min(5, Math.round(+s.note || 0))), wd: String(s.wd || "") })),
+    sagasRassemblees: !!d.sagasRassemblees   // le grand rassemblement des fiches existantes a déjà eu lieu
   };
+}
+// ---------- Saisons des séries ----------
+// saisons = { actif : suivi saison par saison, liste : [{ n, statut, note, image, passages[] }] }
+// Statut d'une saison : "fini" (vue, vert), "encours" (violet), "avoir" (à voir, bleu), "arrete" (arrêtée / pas vue, gris)
+const STATUTS_SAISON = ["fini", "encours", "avoir", "arrete"];
+const NOMS_SAISON = { fini: "Vue", encours: "En cours", avoir: "À voir", arrete: "Pas vue" };
+function lireSaisons(s = {}, statutSerie = "") {
+  let liste;
+  if (Array.isArray(s.liste)) {
+    liste = s.liste.filter(x => x && +x.n > 0).map(x => ({
+      n: Math.round(+x.n), statut: STATUTS_SAISON.includes(x.statut) ? x.statut : "avoir",
+      note: Math.max(0, Math.min(5, Math.round(+x.note || 0))), image: lienValide(x.image),
+      passages: (Array.isArray(x.passages) ? x.passages : []).map(String).filter(dateValide)
+    }));
+  } else {
+    // Ancien format (avant la v0.10.1) : { total, vues[] } → une saison par numéro
+    const total = Math.max(0, Math.round(+s.total || 0)), vues = new Set((Array.isArray(s.vues) ? s.vues : []).map(Number));
+    const prochaine = Math.max(0, ...vues) + 1;
+    liste = Array.from({ length: total }, (_, k) => {
+      const n = k + 1;
+      const statut = vues.has(n) ? "fini" : statutSerie === "encours" && n === prochaine ? "encours" : statutSerie === "abandon" ? "arrete" : "avoir";
+      return { n, statut, note: 0, image: "", passages: [] };
+    });
+  }
+  liste.sort((a, b) => a.n - b.n);
+  return { actif: !!s.actif && liste.length > 0, liste };
+}
+const suiviSaisons = m => m.type === "serie" && m.saisons.actif && m.saisons.liste.length > 0;
+// Les statuts « présents » d'une fiche : une série suivie par saison peut être à la fois vue, en cours et à voir
+function statutsDe1(m) {
+  if (!suiviSaisons(m)) return new Set([m.statut]);
+  const s = new Set(m.saisons.liste.map(x => x.statut === "arrete" ? null : x.statut).filter(Boolean));
+  if (m.statut === "reserve" && !s.has("fini") && !s.has("encours")) return new Set(["reserve"]);
+  if (!s.size) s.add("abandon");   // toutes les saisons arrêtées
+  return s;
+}
+// Modifier une saison (puis le statut de la série suit)
+function majSaison(m, n, modif) {
+  majFiche(m, x => { const s = x.saisons.liste.find(y => y.n === n); if (s) modif(s, x); if (suiviSaisons(x)) x.statut = statutSerie(x); });
+}
+// Saisons cherchées sur TVmaze (nouvelles saisons + images), sans toucher à ce que j'ai déjà rempli.
+// Statut de départ des nouvelles saisons : d'après celui de la série.
+async function chargerSaisons(m) {
+  ui.chargeSaisons = true; rendreFiche();
+  let trouvees = [];
+  try { trouvees = await saisonsTVmaze(m.titre); } catch (e) { /* pas de réseau */ }
+  ui.chargeSaisons = false;
+  const x0 = medias.get(m.id);
+  if (!x0) { rendreFiche(); return; }
+  const defaut = x0.statut === "fini" ? "fini" : x0.statut === "abandon" ? "arrete" : "avoir";
+  majFiche(x0, x => {
+    const liste = x.saisons.liste;
+    for (const t of trouvees) {
+      const deja = liste.find(s => s.n === t.n);
+      if (deja) { if (!deja.image && t.image) deja.image = t.image; }
+      else liste.push({ n: t.n, statut: defaut, note: 0, image: t.image, passages: [] });
+    }
+    if (!liste.length) liste.push({ n: 1, statut: defaut, note: 0, image: "", passages: [] });
+    if (x.statut === "encours" && !liste.some(s => s.statut === "encours")) { const p = liste.find(s => s.statut === "avoir"); if (p) p.statut = "encours"; }
+    liste.sort((a, b) => a.n - b.n);
+    x.saisons.actif = true;
+    x.statut = statutSerie(x);
+  });
+  if (!trouvees.length) afficherToast("Saisons introuvables en ligne : ajoute-les avec « + Saison »");
+}
+// Le statut « principal » d'une série suivie par saison (pour le tri, l'Excel…)
+function statutSerie(m) {
+  const s = statutsDe1(m);
+  return s.has("encours") ? "encours" : s.has("fini") ? "fini" : s.has("reserve") ? "reserve" : s.has("avoir") ? "avoir" : "abandon";
 }
 const trierPassages = l => [...new Set(l)].sort((a, b) => valeurDate(a) - valeurDate(b));
 // Avant la v0.7, « Commencé » était une date à part (champ debut). Elle devient le début d'une période :
@@ -381,6 +468,7 @@ function demarrerDemo() {
   $("appli").hidden = false;
   router();
   rafraichir();
+  setTimeout(rassemblementInitial, 1500);   // v0.10.1 : rassembler une fois les sagas des fiches déjà là
 }
 let infoCompte = "";
 function demarrerFirebase() {
@@ -411,6 +499,7 @@ function demarrerFirebase() {
       }
       chargeDonnees = true;
       rafraichir();
+      if (!snap.metadata.fromCache && pret()) setTimeout(rassemblementInitial, 2500);
     });
     onSnapshot(collection(db, "users", uid, NOM_APPLI, "donnees", "medias"), { includeMetadataChanges: true }, snap => {
       metaMedias = snap.metadata; majSynchro();
@@ -418,6 +507,7 @@ function demarrerFirebase() {
       medias = new Map(snap.docs.map(d => [d.id, normaliser(d.id, d.data())]));
       chargeMedias = true;
       rafraichir();
+      if (metaDonnees && !metaDonnees.fromCache && pret()) setTimeout(rassemblementInitial, 2500);
     });
   });
 }
@@ -488,7 +578,8 @@ let ui = {
   type: TYPES.some(t => t.id === reglages.type) ? reglages.type : "film",
   page: [0, 1, 2].includes(reglages.page) ? reglages.page : 0,
   recherche: "", filtres: new Set(), friseTypes: new Set(),
-  ajoutPassage: false, per: null, vaOnglet: "proches"
+  ajoutPassage: false, per: null, vaOnglet: "proches",
+  sagasOuvertes: new Set(), seriesOuvertes: new Set()   // piles déroulées (sagas) et séries déroulées (saisons)
 };
 let adresse = lireAdresse();
 let ficheAffichee = null;   // id de la fiche ouverte (pour ne l'animer qu'à l'ouverture)
@@ -497,7 +588,7 @@ function router() {
   if (!pret()) return;
   const avant = adresse;
   adresse = lireAdresse();
-  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.per = null; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
+  if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.per = null; ui.perSaison = null; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
   // Fenêtre « Choisir l'affiche » (2e couche, au-dessus de la fiche)
   const m = adresse.fiche && medias.get(adresse.fiche);
   if (adresse.affiche && m && affChoix?.id !== m.id) ouvrirAffiche(m);
@@ -590,20 +681,22 @@ function catsChoisies(type) {
   return Array.isArray(c) && c.some(x => possibles.includes(x)) ? c.filter(x => possibles.includes(x)) : possibles;
 }
 // Dans quelle catégorie de « À voir » tombe une fiche (une seule) ?
-const categorieAvoir = m => m.statut === "avoir" ? "avoir" : m.statut === "reserve" ? "reserve"
+const categorieAvoir = m => statutsDe1(m).has("avoir") ? "avoir" : m.statut === "reserve" ? "reserve"
   : (m.type === "jeu" && m.infini) ? "infini" : m.revoir ? "revoir" : null;
 // Contenu d'une page : des sections { cle, titre, liste, pale }
 function contenuPage(i, type = ui.type) {
-  const duType = [...medias.values()].filter(m => m.type === type && !m.aVerifier && correspond(m));
+  // (Menu de l'onglet Séries › « Mélanger » : les courts & anthologies apparaissent aussi dans les séries)
+  const melange = type === "serie" && reglages.melangeCourts;
+  const duType = [...medias.values()].filter(m => (m.type === type || (melange && m.type === "court")) && !m.aVerifier && correspond(m));
   let sections;
   if (i === 0) {
     const choix = catsChoisies(type);
     sections = CATS_AVOIR(type).filter(c => choix.includes(c.cle)).map(c => ({ ...c, liste: trier(duType.filter(m => categorieAvoir(m) === c.cle)) }));
   } else if (i === 1) {
-    sections = [{ cle: "encours", titre: "", liste: trier(duType.filter(m => m.statut === "encours")) }];
+    sections = [{ cle: "encours", titre: "", liste: trier(duType.filter(m => statutsDe1(m).has("encours"))) }];
   } else {
-    sections = [{ cle: "fini", titre: "", liste: trier(duType.filter(m => m.statut === "fini")) },
-      { cle: "abandon", titre: "Abandonnés", liste: trier(duType.filter(m => m.statut === "abandon")), pale: true }];
+    sections = [{ cle: "fini", titre: "", liste: trier(duType.filter(m => statutsDe1(m).has("fini"))) },
+      { cle: "abandon", titre: "Abandonnés", liste: trier(duType.filter(m => statutsDe1(m).has("abandon"))), pale: true }];
   }
   sections = sections.filter(s => s.liste.length);
   // Menu Tags › « Tout mélangé » : une seule liste triée (les fiches en réserve / abandonnées restent grisées)
@@ -620,20 +713,22 @@ const vueActuelle = () => {
 // Petite ligne grise sous le titre : « 2024 · Science-fiction · S2/4 »
 function meta(m) {
   const morceaux = [m.annee, m.genres[0]];
-  if (m.type === "serie" && m.saisons.actif && m.saisons.total) morceaux.push(`S${m.saisons.vues.length}/${m.saisons.total}`);
   return morceaux.filter(Boolean).map(echapper).join(" · ");
 }
 // Petit mot à côté du titre : « à revoir », « ∞ infini »
 const marque = m => (m.type === "jeu" && m.infini) ? `<span class="rev">∞ infini</span>` : m.revoir ? `<span class="rev">${echapper(MOTS[m.type].revoir.toLowerCase())}</span>` : "";
-function ligneHTML(m, pale) {
+// opts.page = page affichée (ruban « aussi en cours » des séries) ; opts.statut = montrer le statut (tomes d'une pile)
+function ligneHTML(m, pale, opts = {}) {
+  const saisons = suiviSaisons(m) ? `${bandeauHTML(m)}<span class="bande-txt">${echapper(resumeSaisons(m))}</span>` : "";
+  const droite = opts.statut && m.statut !== "fini" ? `<span class="pastille-st-mini" style="--c:var(--st-${m.statut})">${nomStatut(m.statut, m.type)}</span>` : `${m.coeur ? ic("coeur", "coeur") : ""}${etoiles(m.note)}`;
   return `<button class="it ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m)}
-    <span class="it-txt"><span class="it-ti">${echapper(m.titre)}${marque(m)}</span><span class="it-me">${meta(m)}</span></span>
-    <span class="it-rt">${m.coeur ? ic("coeur", "coeur") : ""}${etoiles(m.note)}</span></button>`;
+    <span class="it-txt"><span class="it-ti">${echapper(m.titre)}${marque(m)}</span><span class="it-me">${meta(m)}</span>${saisons}</span>
+    <span class="it-rt">${rubanHTML(m, opts.page)}${droite}</span></button>`;
 }
 function carteHTML(m, pale) {
   return `<button class="mc ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m, "grand")}
     ${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${(m.type === "jeu" && m.infini) ? `<span class="mc-rev">∞</span>` : m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}
-    <span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
+    ${suiviSaisons(m) ? bandeauHTML(m) : ""}<span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
 }
 // « Étape » d'une fiche selon le tri choisi : les listes sont coupées en paquets (★★★★★, 2019, M…)
 // et la barre de défilement rapide montre l'étape où l'on arrive.
@@ -649,12 +744,34 @@ function etapeDe(m, tri) {
   const d = new Date(m.cree);
   return `${NOMS_MOIS[d.getMonth()]} ${d.getFullYear()}`;
 }
-// Une liste avec ses titres d'étapes (seulement s'il y a au moins 2 étapes différentes)
-function avecEtapes(liste, dessiner) {
+// Une liste avec ses titres d'étapes (seulement s'il y a au moins 2 étapes différentes).
+// Chaque élément = { m } (une fiche), { m, saga } (une pile) ou { m, saison } (une saison seule).
+function avecEtapes(elements, dessiner) {
   const tri = reglages.tris[ui.type] || "ajout";
-  const etapes = liste.map(m => etapeDe(m, tri));
+  const etapes = elements.map(e => etapeDe(e.m, tri));
   const plusieurs = new Set(etapes).size > 1;
-  return liste.map((m, k) => (plusieurs && etapes[k] !== etapes[k - 1] ? `<div class="etape">${echapper(etapes[k])}</div>` : "") + dessiner(m)).join("");
+  return elements.map((e, k) => (plusieurs && etapes[k] !== etapes[k - 1] ? `<div class="etape">${echapper(etapes[k])}</div>` : "") + dessiner(e)).join("");
+}
+// Statut d'une saison → section de page où elle va quand les saisons sont « séparées »
+const SECTION_SAISON = { fini: "fini", encours: "encours", avoir: "avoir", arrete: "abandon" };
+const PAGE_SECTIONS = { 0: ["avoir"], 1: ["encours"], 2: ["fini", "abandon"] };
+// Transforme la liste d'une section en éléments : piles de sagas (mode groupé), saisons séparées…
+function elementsDe(liste, cle, page) {
+  const vus = new Set(), out = [];
+  for (const m of liste) {
+    // Séries suivies par saison, mode « séparé » : une ligne par saison de cette section
+    if (suiviSaisons(m) && !groupe("serie")) {
+      const voulues = cle === "tout" ? PAGE_SECTIONS[page] : [cle];
+      const saisons = m.saisons.liste.filter(s => voulues.includes(SECTION_SAISON[s.statut]));
+      if (saisons.length && ["fini", "encours", "avoir", "abandon", "tout"].includes(cle)) { saisons.forEach(s => out.push({ m, saison: s })); continue; }
+    }
+    const saga = TYPES_SAGA.includes(m.type) && groupe(m.type) ? sagaActive(m) : null;
+    if (!saga) { out.push({ m }); continue; }
+    if (vus.has(saga.id)) continue;   // la pile est déjà placée (à l'endroit de son 1er tome)
+    vus.add(saga.id);
+    out.push({ m, saga });
+  }
+  return out;
 }
 function pageHTML(i) {
   // (les catégories affichées et « Tout mélangé » se choisissent dans le menu Tags)
@@ -667,9 +784,70 @@ function pageHTML(i) {
   const titre = (s, k) => s.titre && (sections.length > 1 || i !== 0) && !(i === 2 && k === 0) ? `<div class="sec">${echapper(s.titre)}</div>` : "";
   if (vue === "mosa") {
     const cols = zoomDe("mosa");
-    return `<div class="mosa" style="--cols:${cols}" data-cols="${cols}">${sections.map((s, k) => titre(s, k) + avecEtapes(s.liste, m => carteHTML(m, estPale(m)))).join("")}</div>`;
+    const carte = e => e.saga ? pileHTML(e.saga, true) : e.saison ? carteSaisonHTML(e.m, e.saison) : carteHTML(e.m, estPale(e.m), i);
+    return `<div class="mosa" style="--cols:${cols}" data-cols="${cols}">${sections.map((s, k) => titre(s, k) + avecEtapes(elementsDe(s.liste, s.cle, i), carte)).join("")}</div>`;
   }
-  return `<div class="liste ${vue === "compact" ? "compacte" : ""} z${zoomDe(vue)}">${sections.map((s, k) => titre(s, k) + avecEtapes(s.liste, m => ligneHTML(m, estPale(m)))).join("")}</div>`;
+  const ligne = e => e.saga ? pileHTML(e.saga, false) : e.saison ? ligneSaisonHTML(e.m, e.saison) : ligneHTML(e.m, estPale(e.m), { page: i });
+  return `<div class="liste ${vue === "compact" ? "compacte" : ""} z${zoomDe(vue)}">${sections.map((s, k) => titre(s, k) + avecEtapes(elementsDe(s.liste, s.cle, i), ligne)).join("")}</div>`;
+}
+
+// --- Séries suivies par saison : bandeau (une case par saison) et petit résumé ---
+function bandeauHTML(m) {
+  return `<span class="bandeau">${m.saisons.liste.map(s => `<i class="b-${s.statut}" title="Saison ${s.n} : ${NOMS_SAISON[s.statut]}"></i>`).join("")}</span>`;
+}
+// « S1–2 vues · S3 en cours · S4 pas vue »
+function resumeSaisons(m) {
+  const morceaux = [];
+  for (const s of m.saisons.liste) {
+    const der = morceaux[morceaux.length - 1];
+    if (der && der.statut === s.statut && der.fin === s.n - 1) der.fin = s.n; else morceaux.push({ statut: s.statut, debut: s.n, fin: s.n });
+  }
+  const mot = (st, plus) => ({ fini: plus ? "vues" : "vue", encours: "en cours", avoir: "à voir", arrete: plus ? "pas vues" : "pas vue" }[st]);
+  return morceaux.map(x => `S${x.debut}${x.fin > x.debut ? `–${x.fin}` : ""} ${mot(x.statut, x.fin > x.debut)}`).join(" · ");
+}
+// Ruban « aussi en cours » : la série apparaît aussi dans une autre page
+function rubanHTML(m, page) {
+  if (!suiviSaisons(m) || page == null) return "";
+  const s = statutsDe1(m), autres = [];
+  if (page !== 1 && s.has("encours")) autres.push("en cours");
+  if (page !== 2 && s.has("fini")) autres.push("vue");
+  if (page !== 0 && s.has("avoir")) autres.push("à voir");
+  return autres.length ? `<span class="ruban">aussi ${autres.join(", ")}</span>` : "";
+}
+function ligneSaisonHTML(m, s) {
+  const v = { titre: m.titre, image: s.image || m.image, miniature: s.image ? "" : m.miniature };
+  return `<button class="it ${s.statut === "arrete" ? "pale" : ""}" data-fiche="${m.id}">${vignette(v)}
+    <span class="it-txt"><span class="it-ti">${echapper(m.titre)} <b class="num-s">S${s.n}</b></span><span class="it-me">Saison ${s.n} · ${NOMS_SAISON[s.statut]}</span></span>
+    <span class="it-rt">${etoiles(s.note)}</span></button>`;
+}
+function carteSaisonHTML(m, s) {
+  const v = { titre: m.titre, image: s.image || m.image, miniature: s.image ? "" : m.miniature };
+  return `<button class="mc ${s.statut === "arrete" ? "pale" : ""}" data-fiche="${m.id}">${vignette(v, "grand")}<span class="mc-s">S${s.n}</span>
+    <span class="mc-ti">${echapper(m.titre)}</span>${etoiles(s.note)}</button>`;
+}
+
+// --- Piles de sagas (mode groupé) : toucher la pile la déroule sur place ---
+const MOT_TOMES = { livre: "tomes", film: "films", jeu: "jeux", court: "épisodes" };
+function pileHTML(s, mosa) {
+  const tomes = tomesDe(s), ouverte = ui.sagasOuvertes.has(s.id), couv = couvertureSaga(s, tomes);
+  const finis = tomes.filter(t => t.statut === "fini").length;
+  const prog = `<span class="prog">${tomes.map(t => `<i class="b-${t.statut}"></i>`).join("")}</span>`;
+  if (mosa) {
+    return `<button class="mc pile ${ouverte ? "ouverte" : ""}" data-pile="${s.id}">${vignette(couv, "grand")}<span class="nb">${tomes.length}</span>
+      <span class="mc-ti">${echapper(s.nom)}</span>${etoiles(s.note)}</button>
+      ${ouverte ? `<div class="mosa-sous">${barreSagaHTML(s)}<div class="mosa-sous-g">${tomes.map(t => carteHTML(t, estPale(t))).join("")}</div></div>` : ""}`;
+  }
+  const lus = finis ? `${finis} ${MOTS[s.type].fini.toLowerCase()}${finis > 1 ? "s" : ""}` : "";
+  return `<div class="pile-bloc ${ouverte ? "ouverte" : ""}"><button class="it pile" data-pile="${s.id}"><span class="pile-vg">${vignette(couv)}<span class="nb">${tomes.length}</span></span>
+    <span class="it-txt"><span class="it-ti">${echapper(s.nom)}</span><span class="it-me">${[tomes[0]?.createur, `${tomes.length} ${MOT_TOMES[s.type]}`, lus].filter(Boolean).map(echapper).join(" · ")}</span>${prog}</span>
+    <span class="it-rt">${etoiles(s.note)}${ic("bas", "s chev")}</span></button>
+    ${ouverte ? `<div class="sous">${barreSagaHTML(s)}${tomes.map(t => ligneHTML(t, estPale(t), { statut: true })).join("")}</div>` : ""}</div>`;
+}
+// Petite barre de la saga déroulée : sa note, son affiche, ses réglages
+function barreSagaHTML(s) {
+  return `<div class="saga-barre"><span class="note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= s.note ? "on" : ""}" data-saga-note="${s.id}:${i}" aria-label="Saga : ${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}</span>
+    <span class="sp"></span><button class="btn-mini" data-saga-affiche="${s.id}">${ic("photo", "s")}Affiche</button>
+    <button class="btn-mini" data-saga-menu="${s.id}" aria-label="Réglages de la saga">${ic("dots", "s")}</button></div>`;
 }
 
 // ---------- Zoom des listes (pincer à deux doigts ; sur PC : Ctrl + molette) ----------
@@ -780,6 +958,7 @@ function rendreOutils() {
   $("outils").innerHTML = `<button class="btn outil ${ui.filtres.size ? "actif" : ""}" data-action="menu-tags">${ic("tag", "s")}Tags${ui.filtres.size ? `<i class="pastille"></i>` : ""}</button>
     <button class="btn outil" data-action="menu-tri">${ic("tri", "s")}${tri.nom}${ic("bas", "s fl")}</button>
     <span class="sp"></span>
+    ${TYPES_SAGA.includes(ui.type) || ui.type === "serie" ? `<button class="pile-btn ${groupe(ui.type) ? "on" : ""}" data-action="pile" title="${groupe(ui.type) ? (ui.type === "serie" ? "Séries groupées (toucher : saisons séparées)" : "Sagas groupées (toucher : tomes séparés)") : "Séparé (toucher : grouper)"}" aria-label="Grouper ou séparer">${ic("pile", "s")}</button>` : ""}
     <div class="vues"><i class="vind"></i>${vues.map(v => `<button data-vue="${v.id}" class="${v.id === vue ? "on" : ""}" title="${v.nom}" aria-label="${v.nom}">${ic(v.icone, "s")}${estPC() && v.id === vue ? `<span>${v.nom}</span>` : ""}</button>`).join("")}</div>`;
   poserPastilleVues();
 }
@@ -806,7 +985,11 @@ function rendreContenu() {
 function rendreOnglets() {
   if (estPC()) { $("onglets").innerHTML = ""; return; }
   retenir("#onglets .oind");
-  $("onglets").innerHTML = `<i class="oind"></i>${TYPES.map(t => `<button class="og ${t.id === ui.type && !adresse.frise ? "on" : ""}" data-type="${t.id}">${ic(t.id)}<span>${t.nom}</span></button>`).join("")}`;
+  // L'onglet Séries devient « Courts » quand on est dans les courts & anthologies (appui long = choisir)
+  $("onglets").innerHTML = `<i class="oind"></i>${TYPES.filter(t => t.id !== "court").map(t => {
+    const id = t.id === "serie" && ui.type === "court" ? "court" : t.id, tt = typeDe(id);
+    return `<button class="og ${id === ui.type && !adresse.frise ? "on" : ""}" data-type="${id}" ${t.id === "serie" ? "data-sous-type" : ""}>${ic(id)}<span>${tt.court || tt.nom}</span></button>`;
+  }).join("")}`;
   poserPlaquetteOnglets();
 }
 const poserPlaquetteOnglets = () => poserPlaquette("#onglets .oind", "#onglets .og.on");
@@ -848,6 +1031,14 @@ function evenementsFrise() {
       evs.push({ id: m.id, titre: m.titre, type: m.type, enfance: !!d.enfance, mois: d.mois, precision: d.precision, jour: d.jour,
         libelle: d.periode ? texteDate(p, true).replace(/ \d{4}$/, "") : "", debut: d.periode ? d.debut : null, note: m.note, coeur: m.coeur, fois: k + 1, vignette: vignette(m, "fv"), tri: valeurDate(p) });
     });
+    // Séries suivies par saison : chaque date de saison est un événement « Série · S2 »
+    if (suiviSaisons(m) && !m.aVerifier) m.saisons.liste.forEach(s => s.passages.forEach(p => {
+      const d = lireDate(p);
+      if (!d || d.ouvert) return;
+      const v = vignette({ titre: m.titre, image: s.image || m.image, miniature: s.image ? "" : m.miniature }, "fv");
+      evs.push({ id: m.id, titre: `${m.titre} · S${s.n}`, type: m.type, enfance: !!d.enfance, mois: d.mois, precision: d.precision, jour: d.jour,
+        libelle: d.periode ? texteDate(p, true).replace(/ \d{4}$/, "") : "", debut: d.periode ? d.debut : null, note: s.note, coeur: false, fois: 1, vignette: v, tri: valeurDate(p) });
+    }));
   });
   return evs.sort((a, b) => b.tri - a.tri);
 }
@@ -882,18 +1073,24 @@ function ficheHTML(m) {
   const supports = [...new Set([...donnees.supports, m.support].filter(Boolean))];
   const tousTags = [...new Set([...medias.values()].flatMap(x => x.tags))].sort((a, b) => a.localeCompare(b, "fr"));
   const s = m.saisons;
+  // Séries : suivi saison par saison (chaque saison a son statut, sa note, son image, ses dates)
   const saisons = m.type !== "serie" ? "" : `
-    <div class="bloc"><span class="k">Par saison</span><span class="v"><button class="tog ${s.actif ? "on" : ""}" data-action="saisons" role="switch" aria-checked="${s.actif}" aria-label="Suivre par saison"></button></span></div>
-    ${s.actif ? `<div class="bloc"><span class="k">Saisons</span><span class="v saisons">${Array.from({ length: s.total }, (_, k) => k + 1).map(n => {
-      const vue = s.vues.includes(n), enCours = !vue && n === Math.max(0, ...s.vues) + 1 && m.statut === "encours";
-      return `<button class="sa ${vue ? "vue" : ""} ${enCours ? "encours" : ""}" data-saison="${n}">S${n}${vue ? ic("ok") : ""}</button>`;
-    }).join("")}<button class="sa plus" data-action="saison-plus" aria-label="Ajouter une saison">+</button>${s.total ? `<button class="sa moins" data-action="saison-moins" aria-label="Enlever une saison">−</button>` : ""}</span></div>` : ""}`;
+    <div class="bloc"><span class="k">Par saison</span><span class="v"><button class="tog ${s.actif ? "on" : ""}" data-action="saisons" role="switch" aria-checked="${s.actif}" aria-label="Suivre par saison"></button>
+      ${ui.chargeSaisons ? `<span class="aj-info">Recherche des saisons…</span>` : ""}</span></div>
+    ${s.actif ? `<div class="saisons-l">${s.liste.map(x => `
+      <div class="saison-l ${x.statut === "arrete" ? "pale" : ""}">
+        <button class="saison-img" data-saison-menu="${x.n}" aria-label="Saison ${x.n} : image, dates…">${vignette({ titre: m.titre, image: x.image || m.image, miniature: x.image ? "" : m.miniature }, "s-vg")}<b class="s-n">S${x.n}</b></button>
+        <span class="saison-mid"><span class="note">${[1, 2, 3, 4, 5].map(i => `<button class="et ${i <= x.note ? "on" : ""}" data-saison-note="${x.n}:${i}" aria-label="${i} étoile${i > 1 ? "s" : ""}">★</button>`).join("")}</span>
+          <span class="saison-dates">${x.passages.map(p => echapper(texteDate(p, true))).join(" · ")}</span></span>
+        <button class="saison-st st-${x.statut}" data-saison-statut="${x.n}">${NOMS_SAISON[x.statut]}${ic("bas", "s")}</button></div>
+      ${ui.perSaison === x.n && ui.per ? periodeHTML(ui.per, `s${x.n}`, "Ajouter") : ""}`).join("")}
+      <div class="saisons-bas"><button class="chip plus" data-action="saison-plus">+ Saison</button><button class="chip" data-action="saisons-tvmaze">${ic("cherche", "s")}Mettre à jour</button></div></div>` : ""}`;
   const passages = m.passages.map((p, k) => `<button class="chip ${estOuvert(p) ? "ouvert" : ""}" data-passage="${k}">${echapper(texteDate(p))}${estOuvert(p) ? " …" : ""}</button>`).join("");
   const formPassage = !ui.ajoutPassage || !ui.per ? "" : periodeHTML(ui.per, "fiche", ui.per.remplace != null ? "OK" : "Ajouter");
   return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
     <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff", true)}<span class="fi-crayon">${ic("crayon")}</span></button>
       <div class="fi-tt"><h2>${echapper(m.titre)}</h2>
-        <div class="fi-me">${[m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}${m.genres.length ? `<br>${echapper(m.genres.join(", "))}` : ""}</div></div>
+        <div class="fi-me">${[m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}${sagaPar(m.saga) ? `<br><span class="fi-saga">${ic("pile", "s")}${echapper(sagaPar(m.saga).nom)}${m.tome ? ` · n° ${m.tome}` : ""}</span>` : ""}${m.genres.length ? `<br>${echapper(m.genres.join(", "))}` : ""}</div></div>
       <div class="fi-btns"><button class="btn-icone" data-action="menu-fiche" aria-label="Plus d'actions">${ic("dots")}</button>
         ${estPC() ? `<button class="btn-icone" data-action="fermer-fiche" aria-label="Fermer">${ic("x")}</button>` : ""}</div></div>
     <div class="fi-actions">
@@ -976,7 +1173,7 @@ function periodeHTML(e, ou, texteOK) {
   // « Ajouter ») ; « Enfance » ajoute tout de suite. Pas de « Commencé » pour les films.
   const m = mediaPer(ou);
   const rapides = [["sortie", e.chargeSortie ? "Recherche…" : "À sa sortie"], ["aujourdhui", `${MOTS[m?.type || "film"].fini} aujourd'hui`],
-    ...(m?.type === "film" ? [] : [["commence", "Commencé aujourd'hui"]]), ["enfance", "Enfance"]];
+    ...(dUneTraite(m?.type) ? [] : [["commence", "Commencé aujourd'hui"]]), ["enfance", "Enfance"]];
   return `<div class="per" id="per-${ou}">
     <div class="per-rapides">${rapides.map(([k, n]) => `<button class="per-rap" data-per-rapide="${k}" data-ou="${ou}" ${k === "sortie" && e.chargeSortie ? "disabled" : ""}>${n}</button>`).join("")}</div>
     <div class="per-saisons"><span class="per-mini">Saison</span>${Object.entries(SAISONS).map(([k, s]) => `<button class="per-sai ${saisonActive(k) ? "on" : ""}" data-per-saison="${k}" data-ou="${ou}">${s.nom}</button>`).join("")}</div>
@@ -1053,6 +1250,13 @@ function validerPeriode(ou, imposee = "") {
   }
   const m = ficheOuverte();
   if (!m) return;
+  // Date d'une saison (formulaire ouvert sous la saison) : elle devient vue (ou en cours si « commencé »)
+  if (ou[0] === "s") {
+    const n = +ou.slice(1);
+    ui.per = null; ui.perSaison = null;
+    majSaison(m, n, s => { s.passages = trierPassages([...s.passages, date]); s.statut = estOuvert(date) ? "encours" : "fini"; });
+    return;
+  }
   ui.ajoutPassage = false;
   const final = ajouterPassage(m, date, e.remplace);
   ui.per = null;
@@ -1334,6 +1538,8 @@ function creerFiche(infos, type, statut) {
   const m = normaliser(nouvelId(), { ...infos, type, statut, cree: Date.now() });
   periodeSelonStatut(m, statut);
   ecrireMedia(m);
+  // Fait-elle partie d'une saga ? (cherché en arrière-plan)
+  if (TYPES_SAGA.includes(m.type)) setTimeout(() => { const x = medias.get(m.id); if (x) rassemblerSagas([x]); }, 1500);
   // Copie de l'affiche en arrière-plan (la fiche est déjà enregistrée)
   if (m.image) copierImage(m.image).then(mini => {
     const actuelle = medias.get(m.id);
@@ -1409,7 +1615,8 @@ function ouvrirReglages() {
   ouvrirVoile("reglages", estPC() ? "centre" : "plein", `<div class="fenetre regl" role="dialog" aria-label="Réglages">
     <div class="fhd"><h2>Réglages</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div class="sect">À trier</div>
-    <div class="groupe"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter, découvrir, vérifier une liste</small></span><span class="val">${aVerifierListe().length ? `${aVerifierListe().length} à vérifier` : "bêta"}${ic("droite")}</span></button></div>
+    <div class="groupe"><button class="reg" data-aller="trier"><span>Trier mes fiches<small class="petit-gris">compléter, découvrir, vérifier une liste</small></span><span class="val">${aVerifierListe().length ? `${aVerifierListe().length} à vérifier` : "bêta"}${ic("droite")}</span></button>
+      <button class="reg" data-action="sagas-rassembler"><span>Rassembler les sagas<small class="petit-gris">tomes, films et jeux d'une même série</small></span><span class="val">bêta${ic("pile", "s")}</span></button></div>
     <div class="sect">Compte</div>
     <div class="groupe">
       <div class="reg"><span class="resume">${echapper(infoCompte)}</span><span class="synchro"></span></div>
@@ -1564,13 +1771,166 @@ document.addEventListener("dblclick", e => {
   appliquerTailles();
 });
 
+// ---------- Sagas (tomes d'une même série : livres, films, jeux, anthologies) ----------
+// Une saga est rangée dans donnees.sagas ; chaque tome garde sa fiche (champs saga + tome).
+// En mode « groupé » (bouton pile), les tomes s'affichent en une seule pile ; la pile apparaît
+// dans chaque page où la saga a des tomes. Saga d'un seul titre = fiche normale.
+const TYPES_SAGA = ["livre", "film", "jeu", "court"];
+const collFr = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
+const sagaPar = id => donnees.sagas.find(s => s.id === id) || null;
+function tomesDe(s) {
+  return [...medias.values()].filter(m => m.saga === s.id && !m.aVerifier)
+    .sort((a, b) => (a.tome ?? 1e9) - (b.tome ?? 1e9) || (a.annee || 9999) - (b.annee || 9999) || collFr.compare(a.titre, b.titre));
+}
+const sagaActive = m => { const s = m.saga ? sagaPar(m.saga) : null; return s && tomesDe(s).length >= 2 ? s : null; };
+// Groupé (piles / séries d'un bloc) ou séparé (chaque tome / saison à part) : bouton « pile », par type
+const groupe = type => reglages.groupes?.[type] !== false;
+// Affiche de la saga : celle choisie, sinon celle du tome 1
+const couvertureSaga = (s, tomes = tomesDe(s)) => s.image ? { titre: s.nom, image: s.image, miniature: "" } : (tomes[0] || { titre: s.nom, image: "", miniature: "" });
+
+// Numéro dans un titre : « Toy Story 2 », « Dune, tome 3 », « One Piece T5 » → { base, n }
+function numeroDansTitre(titre) {
+  let r = /^(.+?)[\s,:.\-–]*\b(?:tome|t\.?|vol\.?|volume|livre|partie|chapitre)\s*(\d{1,3})\b/i.exec(titre);
+  if (r && r[1].trim().length > 1) return { base: r[1].trim(), n: +r[2] };
+  r = /^(.+?)\s+(\d{1,2})(?:\s*[:\-–].*)?$/.exec(titre);
+  if (r) return { base: r[1].trim(), n: +r[2] };
+  return null;
+}
+function trouverOuCreerSaga(type, nom, wd = "") {
+  let s = donnees.sagas.find(x => x.type === type && ((wd && x.wd === wd) || titreNu(x.nom) === titreNu(nom)));
+  if (!s) { s = { id: nouvelId(), type, nom, image: "", note: 0, wd }; donnees.sagas.push(s); }
+  else if (wd && !s.wd) s.wd = wd;
+  return s;
+}
+// Titres numérotés (« Toy Story », « Toy Story 2 », « Toy Story 3 ») → une saga, même sans Wikidata
+function sagasParTitres(modifiees) {
+  const groupes = new Map();
+  for (const m of medias.values()) {
+    if (!TYPES_SAGA.includes(m.type) || m.saga || m.sagaManuel || m.aVerifier) continue;
+    const num = numeroDansTitre(m.titre), cle = m.type + "|" + titreNu(num ? num.base : m.titre);
+    if (!groupes.has(cle)) groupes.set(cle, []);
+    groupes.get(cle).push({ m, n: num?.n ?? null, base: num ? num.base : m.titre });
+  }
+  for (const g of groupes.values()) {
+    if (g.length < 2 || !g.some(x => x.n != null)) continue;   // au moins 2 titres, dont un numéroté
+    const s = trouverOuCreerSaga(g[0].m.type, g.find(x => x.n == null)?.base || g[0].base);
+    for (const x of g) { x.m.saga = s.id; x.m.tome = x.n ?? (x.m.tome || 1); modifiees.add(x.m.id); }
+  }
+}
+// Rassemble les sagas : Wikidata (« fait partie de la série »), puis titres numérotés.
+// liste = fiches à examiner ; annoncer = petits messages d'avancement (grand rassemblement)
+let rassemblement = null, sagasEnAttente = [];   // (fiches arrivées pendant un rassemblement : traitées juste après)
+async function rassemblerSagas(liste, { annoncer = false } = {}) {
+  if (rassemblement) { sagasEnAttente.push(...liste); return; }
+  liste = liste.filter(m => TYPES_SAGA.includes(m.type) && !m.sagaManuel && !m.aVerifier);
+  rassemblement = { fait: 0, total: liste.length };
+  // (les résultats sont gardés à part et appliqués à la fin : une synchro peut remplacer
+  //  les fiches en mémoire pendant la recherche, qui dure parfois une ou deux minutes)
+  const resultats = new Map();
+  let k = 0;
+  // 4 recherches à la fois (assez rapide, sans surcharger Wikipédia)
+  const ouvrier = async () => {
+    while (k < liste.length) {
+      const m = liste[k++];
+      try { resultats.set(m.id, await infosSaga(m.type, m.titre, m.annee, m.wd)); }
+      catch (e) { /* pas de réseau pour cette fiche : on la reverra une autre fois */ }
+      rassemblement.fait++;
+      if (annoncer && rassemblement.fait % 40 === 0) afficherToast(`Sagas : ${rassemblement.fait} / ${liste.length} fiches examinées…`);
+    }
+  };
+  await Promise.all([ouvrier(), ouvrier(), ouvrier(), ouvrier()]);
+  const modifiees = new Set();
+  for (const [id, r] of resultats) {
+    const x = medias.get(id);
+    if (!x || x.sagaManuel) continue;
+    x.wd = r.wd; x.sagaCherchee = true;
+    if (r.saga) { x.saga = trouverOuCreerSaga(x.type, r.saga.nom, r.saga.wd).id; if (r.rang) x.tome = r.rang; }
+    modifiees.add(id);
+  }
+  sagasParTitres(modifiees);
+  // Les sagas vides (plus aucun tome) disparaissent
+  donnees.sagas = donnees.sagas.filter(s => [...medias.values()].some(m => m.saga === s.id));
+  sauverDonnees();
+  ecrireMedias([...modifiees].map(id => medias.get(id)).filter(Boolean));
+  rassemblement = null;
+  rendreContenu();
+  if (annoncer) afficherToast(`Sagas rassemblées : ${donnees.sagas.filter(s => tomesDe(s).length >= 2).length}`);
+  if (sagasEnAttente.length) { const suite = sagasEnAttente.map(m => medias.get(m.id)).filter(Boolean); sagasEnAttente = []; rassemblerSagas(suite); }
+}
+// Au premier lancement de la v0.10.1 : rassembler les fiches déjà là (une seule fois, tous appareils)
+function rassemblementInitial() {
+  if (donnees.sagasRassemblees || rassemblement) return;
+  donnees.sagasRassemblees = true;
+  sauverDonnees();
+  afficherToast("Rassemblement des sagas en cours (en arrière-plan)…");
+  rassemblerSagas([...medias.values()], { annoncer: true });
+}
+// --- Affiche de la saga : un tome, une affiche trouvée en ligne, ou celle par défaut (tome 1) ---
+function ouvrirAfficheSaga(s) {
+  const v2 = $("voile2"), tomes = tomesDe(s);
+  v2.className = "voile " + (estPC() ? "centre" : "bas");
+  v2.dataset.quoi = "saga";
+  const choix = [...new Set(tomes.map(t => t.image).filter(Boolean))];
+  const grille = urls => urls.map(u => `<button class="aff" data-saga-aff="${s.id}" data-url="${echapper(u)}"><span class="aff-v">${vignette({ titre: s.nom, image: u, miniature: "" }).replace(' loading="lazy"', "").replace("<img ", `<img onload="verifierHauteur(this)" `)}</span></button>`).join("");
+  v2.innerHTML = `<div class="fenetre affiches" role="dialog" aria-label="Affiche de la saga">
+    <div class="fhd"><h2>Affiche · ${echapper(s.nom)}</h2><button class="btn-icone" data-action="saga-aff-fermer" aria-label="Fermer">${ic("x")}</button></div>
+    <div class="aff-grille" id="saga-grille">${grille(choix)}<div class="aff-attente">Recherche…</div></div>
+    <div class="deux aff-bas"><button class="btn" data-saga-aff="${s.id}" data-url="">Celle du tome 1</button><button class="btn" data-action="saga-aff-fermer">Fermer</button></div></div>`;
+  v2.hidden = false;
+  chercherAffiches(s.type === "court" ? "film" : s.type, s.nom).catch(() => []).then(urls => {
+    if ($("saga-grille")) $("saga-grille").innerHTML = grille([...new Set([...choix, ...urls])]);
+  });
+}
+function fermerVoile2() { const v2 = $("voile2"); v2.hidden = true; v2.innerHTML = ""; v2.dataset.quoi = ""; }
+// Menu ⋯ de la fiche › « Saga… » : ranger la fiche dans une saga, en sortir, changer son numéro
+function menuSagaFiche(el, m) {
+  const sagas = donnees.sagas.filter(s => s.type === m.type).sort((a, b) => collFr.compare(a.nom, b.nom));
+  const actuelle = sagaPar(m.saga);
+  const choix = [
+    { titre: actuelle ? `Saga : ${actuelle.nom}` : "Ranger dans une saga" },
+    { id: "nouvelle", html: `${ic("plus", "s")}Nouvelle saga…` },
+    ...(actuelle ? [{ id: "tome", html: `<span>N° dans la saga<small>${m.tome ? `actuellement ${m.tome}` : "pas de numéro"}</small></span>` }, { id: "sortir", html: `${ic("x", "s")}Sortir de la saga`, danger: true }] : []),
+    ...sagas.filter(s => s.id !== m.saga).slice(0, 30).map(s => ({ id: s.id, html: `<span>${echapper(s.nom)}<small>${tomesDe(s).length} ${MOT_TOMES[s.type]}</small></span>` }))
+  ];
+  ouvrirMenu(el, choix, i => {
+    const c = choix[i]?.id;
+    if (!c) return;
+    majFiche(m, x => {
+      x.sagaManuel = true;
+      if (c === "sortir") { x.saga = ""; x.tome = null; return; }
+      if (c === "tome") { const n = parseFloat(prompt("Numéro dans la saga :", m.tome || "")); if (n > 0) x.tome = n; return; }
+      if (c === "nouvelle") {
+        const nom = (prompt("Nom de la saga :", numeroDansTitre(m.titre)?.base || m.titre) || "").trim();
+        if (!nom) return;
+        x.saga = trouverOuCreerSaga(m.type, nom).id; sauverDonnees(); return;
+      }
+      x.saga = c;
+    });
+    donnees.sagas = donnees.sagas.filter(s => [...medias.values()].some(x => x.saga === s.id));
+    sauverDonnees();
+  }, { classe: "menu-long" });
+}
+// Menu ⋯ d'une saga déroulée : renommer, défaire
+function menuSaga(el, s) {
+  ouvrirMenu(el, [{ html: `${ic("crayon", "s")}Renommer` }, { html: `${ic("x", "s")}Défaire la saga<small>les tomes redeviennent des fiches séparées</small>`, danger: true }], i => {
+    if (i === 0) { const nom = (prompt("Nom de la saga :", s.nom) || "").trim(); if (nom) { s.nom = nom; sauverDonnees(); rendreContenu(); } return; }
+    const tomes = tomesDe(s), numeros = tomes.map(t => t.tome);
+    tomes.forEach(t => { t.saga = ""; t.tome = null; t.sagaManuel = true; });
+    donnees.sagas = donnees.sagas.filter(x => x.id !== s.id);
+    ecrireMedias(tomes); sauverDonnees(); rendreContenu();
+    afficherToast(`Saga « ${s.nom} » défaite`, () => {
+      donnees.sagas.push(s); tomes.forEach((t, k) => { t.saga = s.id; t.tome = numeros[k]; }); ecrireMedias(tomes); sauverDonnees(); rendreContenu();
+    });
+  });
+}
+
 // ---------- Mode « Trier » (Réglages › Trier mes fiches) ----------
 // Les fiches incomplètes défilent une par une (comme des cartes) : je remplis ce que j'ai choisi
 // (note, date pour la frise, affiche, tags). La carte ne passe qu'avec le bouton « Suivant »
 // (« Précédent » pour revenir) : rien ne bouge tout seul.
 const CHAMPS_TRI = {
   note:    { nom: "Note",         applique: m => ["fini", "abandon", "encours"].includes(m.statut), manque: m => !m.note && !m.notePlusTard },
-  date:    { nom: "Date (frise)", applique: m => ["fini", "abandon"].includes(m.statut), manque: m => !m.passages.length },
+  date:    { nom: "Date (frise)", applique: m => ["fini", "abandon"].includes(m.statut), manque: m => !m.passages.length && !(suiviSaisons(m) && m.saisons.liste.some(s => s.passages.length)) },
   affiche: { nom: "Affiche",      applique: () => true, manque: m => !m.image && !m.miniature },
   tags:    { nom: "Tags",         applique: () => true, manque: m => !m.tags.length }
 };
@@ -1948,7 +2308,7 @@ document.addEventListener("pointercancel", () => finGlisseDec(true));
 let ver = null;   // { ids, i, hist, bilan, recherche: { fait, total } }
 const aVerifierListe = () => [...medias.values()].filter(m => m.aVerifier).sort((a, b) => a.cree - b.cree);
 const ficheVer = () => ver && tri?.mode === "verifier" && tri.etape === "cartes" ? medias.get(ver.ids[ver.i]) || null : null;
-const MOTS_TYPES = { film: /^films?$/, serie: /^(series?|serie tv|anime|animes)$/, jeu: /^(jeux?|jeu video|jeux video)$/, livre: /^(livres?|bd|manga|mangas|roman|comics?)$/ };
+const MOTS_TYPES = { court: /^(courts?|court metrage|courts metrages|episode|anthologie)$/, film: /^films?$/, serie: /^(series?|serie tv|anime|animes)$/, jeu: /^(jeux?|jeu video|jeux video)$/, livre: /^(livres?|bd|manga|mangas|roman|comics?)$/ };
 const MOTS_STATUTS = [[/^(a voir|a jouer|a lire|watchlist|envie)$/, "avoir"], [/^(en cours|commence)$/, "encours"],
   [/^(vus?|vues?|joues?|lus?|lues?|fini|finis?|termine)$/, "fini"], [/^(reserve|en reserve)$/, "reserve"], [/^(abandon|abandonne|abandonnee)$/, "abandon"]];
 // Une ligne de texte → les infos d'une fiche (ou null si illisible)
@@ -1961,7 +2321,7 @@ function lireLigneVer(ligne) {
   const [titre, annee, statutTxt = "", noteTxt = "", datesTxt = "", ...avis] = c;
   if (!titre) return null;
   let statut = MOTS_STATUTS.find(([re]) => re.test(simplifier(statutTxt)))?.[1] || (datesTxt || noteTxt ? "fini" : "avoir");
-  if (type === "film" && statut === "encours") statut = "fini";
+  if (dUneTraite(type) && statut === "encours") statut = "fini";
   const etoiles = (noteTxt.match(/★/g) || []).length;
   const note = etoiles || Math.max(0, Math.min(5, parseInt(noteTxt, 10) || 0));
   const passages = datesTxt.split(";").map(dateDuTexte).filter(Boolean);
@@ -1992,7 +2352,7 @@ async function completerVer(liste) {
   for (const m of liste) {
     try {
       // (l'année aide Wikipédia à trouver le bon film ou jeu ; TVmaze et Open Library veulent le titre seul)
-      const res = await chercherEnLigne(m.type, m.type === "film" || m.type === "jeu" ? `${m.titre} ${m.annee || ""}`.trim() : m.titre);
+      const res = await chercherEnLigne(m.type, m.type === "film" || m.type === "court" || m.type === "jeu" ? `${m.titre} ${m.annee || ""}`.trim() : m.titre);
       const r = res.find(x => memeOeuvre(x.titre, x.annee, m.titre, m.annee)) || res.find(x => titreNu(x.titre) === titreNu(m.titre)) || null;
       const x = medias.get(m.id);
       if (r && x) {
@@ -2058,7 +2418,7 @@ function actionVer(oui) {
   const m = ficheVer();
   if (!m) return;
   const copie = structuredClone(m);
-  if (oui) { m.aVerifier = false; m.cree = Date.now(); ecrireMedia(m); } else effacerMedias([m.id]);
+  if (oui) { m.aVerifier = false; m.cree = Date.now(); ecrireMedia(m); rassemblerSagas([m]); } else effacerMedias([m.id]);
   const h = { i: ver.i, oui, annuler: () => { medias.set(copie.id, copie); ecrireMedia(copie); } };
   ver.hist.push(h);
   if (oui) ver.faits++;
@@ -2314,6 +2674,30 @@ document.addEventListener("pointermove", e => { if (defilPrise) { e.preventDefau
 }, true));
 let bloquerClic = false;   // un glisser ne doit pas ouvrir la fiche touchée au départ
 
+// Appui long sur l'onglet Séries : choisir Séries ou Courts & anthologies (et les mélanger ou non)
+let appuiOnglet = null, ongletAppuiLong = false;
+document.addEventListener("pointerdown", e => {
+  const og = e.target.closest("#onglets [data-sous-type]");
+  if (!og) return;
+  ongletAppuiLong = false;
+  clearTimeout(appuiOnglet);
+  appuiOnglet = setTimeout(() => {
+    appuiOnglet = null;
+    ongletAppuiLong = true;   // le clic qui suit (en lâchant le doigt) ne doit pas changer d'onglet
+    vibrer("seuil");
+    ouvrirMenu(og, [
+      { html: `${ic("serie", "s")}<span>Séries</span>`, coche: ui.type === "serie" },
+      { html: `${ic("court", "s")}<span>Courts &amp; anthologies<small>épisodes d'anthologie, courts métrages</small></span>`, coche: ui.type === "court" },
+      { html: `<span>Mélanger les courts dans les séries</span>`, coche: !!reglages.melangeCourts }
+    ], k => {
+      if (k === 2) { changerReglage("melangeCourts", !reglages.melangeCourts); rendreContenu(); return; }
+      changerType(k === 0 ? "serie" : "court");
+      rendreOnglets();
+    }, { classe: "menu-long" });
+  }, 450);
+});
+["pointerup", "pointercancel", "pointerleave"].forEach(ev => document.addEventListener(ev, () => { clearTimeout(appuiOnglet); appuiOnglet = null; }));
+
 // Menu du titre (téléphone) : toucher = ouvrir ; appuyer, glisser vers le choix, lâcher = choisir
 let appuiTitre = null;
 function menuTitre(ancre) {
@@ -2375,6 +2759,15 @@ function changerStatut(m, s) {
   majFiche(m, x => {
     x.statut = s;
     periodeSelonStatut(x, s);
+    // Série suivie par saison : les saisons suivent le nouveau statut de toute la série
+    if (suiviSaisons(x)) {
+      const l = x.saisons.liste;
+      if (s === "fini") l.forEach(y => { y.statut = "fini"; });
+      else if (s === "avoir") l.forEach(y => { y.statut = "avoir"; });
+      else if (s === "abandon") l.forEach(y => { if (y.statut !== "fini") y.statut = "arrete"; });
+      else if (s === "encours" && !l.some(y => y.statut === "encours")) { const p = l.find(y => y.statut !== "fini"); if (p) p.statut = "encours"; }
+      if (s !== "reserve") x.statut = statutSerie(x);
+    }
   });
   // Passé en « Fini » sans période en cours : proposer d'ajouter le mois actuel
   if (s === "fini" && !m.passages.some(p => p.split("/").pop().startsWith(moisActuel()))) {
@@ -2390,7 +2783,7 @@ function ajouterPassage(m, date, remplace = null) {
     if (ouvert && !date.includes("/") && valeurBout(date) >= valeurBout(ouvert.slice(0, -1))) { l = l.filter(p => p !== ouvert); date = `${ouvert.slice(0, -1)}/${date}`; }
     else if (ouvert && !estOuvert(date) && remplace == null) l = l.filter(p => p !== ouvert);
     x.passages = trierPassages([...l, date]);
-    if (estOuvert(date)) { if (x.type !== "film") x.statut = "encours"; return; }   // « Commencé » : passe en cours
+    if (estOuvert(date)) { if (!dUneTraite(x.type)) x.statut = "encours"; return; }   // « Commencé » : passe en cours
     x.revoir = false;
     if (x.statut !== "fini" && x.statut !== "abandon") x.statut = "fini";
   });
@@ -2400,6 +2793,8 @@ function ajouterPassage(m, date, remplace = null) {
 // Un seul « écouteur » pour tous les clics : on regarde ce qui a été touché
 document.addEventListener("click", e => {
   if (bloquerClic) { e.preventDefault(); return; }
+  // (doigt relâché après l'appui long sur l'onglet Séries : ce clic-là ne doit ni changer d'onglet ni fermer le menu)
+  if (ongletAppuiLong && e.target.closest("#onglets [data-sous-type]")) { ongletAppuiLong = false; return; }
   // Menu flottant
   if (menu) {
     const b = e.target.closest("#menu button");
@@ -2408,6 +2803,7 @@ document.addEventListener("click", e => {
   }
   const el = e.target.closest("button, [data-fiche], td[data-col], .points i");
   if (!el) {
+    if (e.target === $("voile2") && $("voile2").dataset.quoi === "saga") { fermerVoile2(); return; }
     if (e.target === $("voile") || e.target === $("voile2")) retour();   // toucher le fond sombre ferme la fenêtre
     return;
   }
@@ -2416,6 +2812,14 @@ document.addEventListener("click", e => {
 
   if (el.matches(".points i")) { allerPage(+d.page); return; }
   if (d.aller) { aller(d.aller); return; }
+  // Sagas : déplier une pile, noter la saga, choisir son affiche, ses réglages
+  if (d.pile) { ui.sagasOuvertes.has(d.pile) ? ui.sagasOuvertes.delete(d.pile) : ui.sagasOuvertes.add(d.pile); rendreContenu(); vibrer(); return; }
+  if (d.sagaNote) { const [id, n] = d.sagaNote.split(":"), s = sagaPar(id); if (s) { s.note = +n === s.note ? 0 : +n; sauverDonnees(); rendreContenu(); vibrer("etoile"); } return; }
+  if (d.sagaAffiche) { const s = sagaPar(d.sagaAffiche); if (s) ouvrirAfficheSaga(s); return; }
+  if (d.sagaMenu) { const s = sagaPar(d.sagaMenu); if (s) menuSaga(el, s); return; }
+  if (d.sagaAff) { const s = sagaPar(d.sagaAff); if (s) { s.image = lienValide(d.url); sauverDonnees(); fermerVoile2(); rendreContenu(); } return; }
+  if (d.action === "saga-aff-fermer") { fermerVoile2(); return; }
+  if (d.action === "pile") { changerReglage("groupes", { ...(reglages.groupes || {}), [ui.type]: !groupe(ui.type) }); rendreOutils(); rendreContenu(); vibrer(); return; }
   if (d.fiche && !el.closest("#voile")) {
     if (adresse.fiche === d.fiche) return;
     // Sur PC, passer d'une fiche à l'autre ne remplit pas l'historique
@@ -2490,16 +2894,19 @@ document.addEventListener("click", e => {
       return;
     }
     // --- Fiche ---
+    case "sagas-rassembler": retour(); afficherToast("Recherche des sagas…"); rassemblerSagas([...medias.values()], { annoncer: true }); return;
     case "note-plustard": if (m) majFiche(m, x => { x.notePlusTard = !x.notePlusTard; if (x.notePlusTard) x.note = 0; }); return;
     case "menu-fiche": {
       if (!m) return;
       const choix = [
         { id: "modifier", html: `${ic("crayon", "s")}Modifier` },
+        ...(TYPES_SAGA.includes(m.type) ? [{ id: "saga", html: `${ic("pile", "s")}Saga…` }] : []),
         { id: "supprimer", html: `${ic("poubelle", "s")}Supprimer`, danger: true }
       ];
       ouvrirMenu(el, choix, i => {
         const c = choix[i].id;
         if (c === "modifier") location.replace("#modifier=" + m.id);
+        else if (c === "saga") setTimeout(() => menuSagaFiche(el, m), 160);
         else {
           effacerMedias([m.id]);
           retour();
@@ -2549,13 +2956,20 @@ document.addEventListener("click", e => {
       }
       return;
     }
-    case "saisons": if (m) majFiche(m, x => { x.saisons.actif = !x.saisons.actif; if (x.saisons.actif && !x.saisons.total) x.saisons.total = 1; }); return;
-    case "saison-plus": if (m) majFiche(m, x => { x.saisons.total++; }); return;
-    case "saison-moins": if (m) majFiche(m, x => { x.saisons.total = Math.max(0, x.saisons.total - 1); x.saisons.vues = x.saisons.vues.filter(n => n <= x.saisons.total); }); return;
+    case "saisons":
+      if (!m) return;
+      if (m.saisons.actif) majFiche(m, x => { x.saisons.actif = false; });
+      else if (m.saisons.liste.length) majFiche(m, x => { x.saisons.actif = true; x.statut = statutSerie(x); });
+      else chargerSaisons(m);   // 1re fois : saisons et images cherchées sur TVmaze
+      return;
+    case "saison-plus":
+      if (m) majFiche(m, x => { const n = Math.max(0, ...x.saisons.liste.map(s => s.n)) + 1; x.saisons.liste.push({ n, statut: "avoir", note: 0, image: "", passages: [] }); x.statut = statutSerie(x); });
+      return;
+    case "saisons-tvmaze": if (m) chargerSaisons(m); return;
     case "ajout-passage":
       // Retoucher « + Ajouter » pendant une modification repart sur un ajout ; sinon ouvre / ferme
       if (ui.ajoutPassage && ui.per?.remplace == null) { ui.ajoutPassage = false; ui.per = null; }
-      else { ui.ajoutPassage = true; ui.per = etatPeriode(); }
+      else { ui.ajoutPassage = true; ui.perSaison = null; ui.per = etatPeriode(); }
       montrerFormPassage();
       return;
     // --- Ajouter ---
@@ -2683,14 +3097,37 @@ document.addEventListener("click", e => {
     });
     return;
   }
-  if (d.saison && m) {
-    const n = +d.saison;
-    majFiche(m, x => {
-      // Toucher une saison : elle (et celles d'avant) deviennent vues ; retoucher la dernière vue l'enlève
-      const vues = new Set(x.saisons.vues);
-      if (vues.has(n) && !vues.has(n + 1)) vues.delete(n); else for (let k = 1; k <= n; k++) vues.add(k);
-      x.saisons.vues = [...vues].sort((a, b) => a - b);
-    });
+  // Saisons d'une série : note, statut, image / dates / suppression
+  if (d.saisonNote && m) { const [n, i] = d.saisonNote.split(":").map(Number); majSaison(m, n, s => { s.note = i === s.note ? 0 : i; }); vibrer("etoile"); return; }
+  if (d.saisonStatut && m) {
+    const n = +d.saisonStatut, s0 = m.saisons.liste.find(x => x.n === n);
+    ouvrirMenu(el, STATUTS_SAISON.map(st => ({ html: `<i class="dot b-${st}"></i>${NOMS_SAISON[st]}`, coche: s0?.statut === st })),
+      k => majSaison(m, n, s => { s.statut = STATUTS_SAISON[k]; }));
+    return;
+  }
+  if (d.saisonMenu && m) {
+    const n = +d.saisonMenu, s0 = m.saisons.liste.find(x => x.n === n);
+    if (!s0) return;
+    const choix = [
+      { titre: `Saison ${n}` },
+      { id: "date", html: `${ic("calendrier", "s")}Ajouter une date` },
+      ...(s0.passages.length ? [{ id: "sans-date", html: `${ic("x", "s")}Enlever les dates` }] : []),
+      { id: "image", html: `${ic("lien", "s")}Image : coller un lien…` },
+      ...(s0.image ? [{ id: "image-serie", html: `${ic("photo", "s")}Image de la série` }] : []),
+      { id: "suppr", html: `${ic("poubelle", "s")}Supprimer la saison`, danger: true }
+    ];
+    ouvrirMenu(el, choix, i => {
+      const c = choix[i]?.id;
+      if (c === "date") { ui.ajoutPassage = false; ui.perSaison = n; ui.per = etatPeriode(); rendreFiche(); $(`per-s${n}`)?.scrollIntoView({ block: "nearest" }); }
+      else if (c === "sans-date") majSaison(m, n, s => { s.passages = []; });
+      else if (c === "image") { const u = lienValide(prompt("Adresse de l'image de la saison :") || ""); if (u) majSaison(m, n, s => { s.image = u; }); }
+      else if (c === "image-serie") majSaison(m, n, s => { s.image = ""; });
+      else if (c === "suppr") {
+        const avant = structuredClone(m.saisons);
+        majFiche(m, x => { x.saisons.liste = x.saisons.liste.filter(s => s.n !== n); if (!x.saisons.liste.length) x.saisons.actif = false; if (suiviSaisons(x)) x.statut = statutSerie(x); });
+        afficherToast(`Saison ${n} supprimée`, () => majFiche(m, x => { x.saisons = avant; if (suiviSaisons(x)) x.statut = statutSerie(x); }));
+      }
+    }, { classe: "menu-long" });
     return;
   }
   if (d.supprTag && m) { majFiche(m, x => { x.tags = x.tags.filter(t => t !== d.supprTag); }); return; }
@@ -2955,9 +3392,17 @@ const COLONNES = [
   { header: "Coup de cœur", key: "coeur", width: 12 }, { header: "Vu", key: "vu", width: 26 },
   { header: "Support", key: "support", width: 14 },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
-  { header: "Saisons", key: "saisons", width: 9 }, { header: "Avis", key: "avis", width: 40 },
+  { header: "Saga", key: "saga", width: 22 }, { header: "Tome", key: "tome", width: 6 },
+  { header: "Saisons", key: "saisons", width: 16 }, { header: "Avis", key: "avis", width: 40 },
   { header: "Image", key: "image", width: 30 }, { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
   { header: "Ajouté le", key: "ajoute", width: 12 }
+];
+const COLONNES_SAGAS = [
+  { header: "Saga", key: "nom", width: 30 }, { header: "Type", key: "type", width: 8 }, { header: "Note", key: "note", width: 7 }, { header: "Image", key: "image", width: 40 }
+];
+const COLONNES_SAISONS = [
+  { header: "Série", key: "serie", width: 30 }, { header: "Année", key: "annee", width: 8 }, { header: "Saison", key: "n", width: 8 },
+  { header: "Statut", key: "statut", width: 10 }, { header: "Note", key: "note", width: 7 }, { header: "Vu", key: "vu", width: 26 }, { header: "Image", key: "image", width: 40 }
 ];
 const COLONNES_REJETES = [
   { header: "Type", key: "type", width: 8 }, { header: "Titre", key: "titre", width: 40 }, { header: "Année", key: "annee", width: 8 },
@@ -2977,7 +3422,8 @@ async function exporterExcel() {
       statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", notePlusTard: ouiNon(m.notePlusTard), coeur: ouiNon(m.coeur),
       vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
       genres: m.genres.join(", "), tags: m.tags.join(", "),
-      saisons: m.saisons.actif ? `${m.saisons.vues.length}/${m.saisons.total}` : "", avis: m.avis,
+      saga: sagaPar(m.saga)?.nom || "", tome: m.tome || "",
+      saisons: suiviSaisons(m) ? resumeSaisons(m) : "", avis: m.avis,
       image: m.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
     })));
     // Miniatures dans la 1re colonne
@@ -2993,6 +3439,11 @@ async function exporterExcel() {
     ajouterFeuille(classeur, "Pas intéressés", COLONNES_REJETES, donnees.rejetes.map(r => ({
       type: typeDe(r.type).un, titre: r.titre, annee: r.annee || "", cat: CATEGORIES.find(c => c.id === r.cat)?.nom || r.cat, date: r.date
     })));
+    // Sagas (leur note et leur affiche à elles) et saisons des séries suivies saison par saison
+    ajouterFeuille(classeur, "Sagas", COLONNES_SAGAS, donnees.sagas.map(s => ({ nom: s.nom, type: typeDe(s.type).un, note: s.note || "", image: s.image })));
+    ajouterFeuille(classeur, "Saisons", COLONNES_SAISONS, liste.filter(suiviSaisons).flatMap(m => m.saisons.liste.map(s => ({
+      serie: m.titre, annee: m.annee || "", n: s.n, statut: NOMS_SAISON[s.statut], note: s.note || "", vu: s.passages.map(p => texteDate(p)).join(" ; "), image: s.image
+    }))));
     await telechargerClasseur(classeur, NOM_APPLI);
   } catch (err) { afficherToast("Export impossible : " + err.message); }
 }
@@ -3022,9 +3473,39 @@ async function importerExcel(champ) {
     const statutDuTexte = (t, type) => STATUTS.find(s => simplifier(nomStatut(s, type)) === simplifier(t))
       || STATUTS.find(s => TYPES.some(x => simplifier(nomStatut(s, x.id)) === simplifier(t))) || "avoir";
     const maintenant = Date.now();
+    // Sagas : onglet « Sagas » (note, affiche) + colonne « Saga » des fiches. Une saga déjà là garde son identifiant.
+    const sagasImport = [];
+    // (ancien fichier sans colonne « Saga » : les fiches gardent leur saga actuelle)
+    const colSaga = lignes.some(l => Object.keys(l).includes("Saga"));
+    const sagaDe = (type, nom) => {
+      nom = String(nom || "").trim();
+      if (!nom) return "";
+      let s = sagasImport.find(x => x.type === type && titreNu(x.nom) === titreNu(nom));
+      if (!s) {
+        const ancienne = donnees.sagas.find(x => x.type === type && titreNu(x.nom) === titreNu(nom));
+        s = ancienne ? { ...ancienne } : { id: nouvelId(), type, nom, image: "", note: 0, wd: "" };
+        sagasImport.push(s);
+      }
+      return s.id;
+    };
+    const feuilleSagas = classeur.getWorksheet("Sagas");
+    if (feuilleSagas) lireFeuille(feuilleSagas).filter(l => l["Saga"]).forEach(l => {
+      const s = sagasImport.find(x => x.id === sagaDe(typeDuTexte(l["Type"]), l["Saga"]));
+      s.note = Math.max(0, Math.min(5, Math.round(+l["Note"] || 0))); s.image = lienValide(l["Image"]);
+    });
+    // Saisons : onglet « Saisons » (une ligne par saison)
+    const saisonsImport = new Map();
+    const feuilleSaisons = classeur.getWorksheet("Saisons");
+    if (feuilleSaisons) lireFeuille(feuilleSaisons).filter(l => l["Série"] && +l["Saison"] > 0).forEach(l => {
+      const k = titreNu(l["Série"]) + "|" + (+l["Année"] || "");
+      if (!saisonsImport.has(k)) saisonsImport.set(k, []);
+      saisonsImport.get(k).push({ n: +l["Saison"], statut: Object.keys(NOMS_SAISON).find(st => simplifier(NOMS_SAISON[st]) === simplifier(l["Statut"])) || "avoir",
+        note: l["Note"], image: l["Image"], passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean) });
+    });
     const nouvelles = lignes.map((l, i) => {
       const type = typeDuTexte(l["Type"]), a = reprendre(cle(type, l["Titre"]));
       const saisons = /^(\d+)\/(\d+)$/.exec(l["Saisons"] || "");
+      const listeSaisons = type === "serie" ? saisonsImport.get(titreNu(l["Titre"]) + "|" + (+l["Année"] || "")) : null;
       const ajoute = Date.parse(l["Ajouté le"]);
       return normaliser(a ? a.id : nouvelId(), {
         type, titre: l["Titre"], annee: l["Année"], createur: l["Créateur"], statut: statutDuTexte(l["Statut"], type),
@@ -3032,23 +3513,28 @@ async function importerExcel(champ) {
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
         avis: l["Avis"], image: l["Image"], miniature: a?.miniature, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
-        saisons: saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
+        saisons: listeSaisons ? { actif: true, liste: listeSaisons }
+          : saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
+        saga: colSaga ? sagaDe(type, l["Saga"]) : (a?.saga || ""), tome: colSaga ? l["Tome"] : a?.tome, wd: a?.wd, sagaCherchee: !!l["Saga"] || a?.sagaCherchee, sagaManuel: a?.sagaManuel,
         cree: a?.cree || (isNaN(ajoute) ? maintenant - i : ajoute)
       });
     });
-    const avant = [...medias.values()], avantSupports = [...donnees.supports], avantRejetes = [...donnees.rejetes];
+    const avant = [...medias.values()], avantSupports = [...donnees.supports], avantRejetes = [...donnees.rejetes], avantSagas = [...donnees.sagas];
     const garder = new Set(nouvelles.map(m => m.id));
     effacerMedias(avant.filter(m => !garder.has(m.id)).map(m => m.id));
     ecrireMedias(nouvelles);
     if (supports.length) donnees.supports = supports;
     if (rejetes) donnees.rejetes = rejetes;
-    if (supports.length || rejetes) sauverDonnees();
+    // Sagas du fichier (celles qui ont encore au moins une fiche)
+    donnees.sagas = colSaga ? sagasImport.filter(s => nouvelles.some(m => m.saga === s.id)) : donnees.sagas;
+    if (feuilleSagas || sagasImport.length) donnees.sagasRassemblees = true;
+    sauverDonnees();
     retour();
     afficherToast(`Import terminé : ${nouvelles.length} fiches`, () => {
       const remises = new Set(avant.map(m => m.id));
       effacerMedias([...medias.keys()].filter(id => !remises.has(id)));
       ecrireMedias(avant);
-      donnees.supports = avantSupports; donnees.rejetes = avantRejetes; sauverDonnees();
+      donnees.supports = avantSupports; donnees.rejetes = avantRejetes; donnees.sagas = avantSagas; sauverDonnees();
       rafraichir();
     });
     // Les fiches importées sans miniature : on recopie leur affiche en arrière-plan

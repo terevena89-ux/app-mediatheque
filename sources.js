@@ -84,8 +84,9 @@ async function livres(q, signal) {
 
 // ---------- Wikipédia (films, jeux, et « Voir aussi ») ----------
 // Mot ajouté à la recherche pour tomber sur la bonne page, et mots attendus dans la description
-const MOT_CLE = { film: "film", jeu: "jeu vidéo", serie: "série télévisée", livre: "roman" };
-const ATTENDU = { film: /film|téléfilm/i, jeu: /jeu/i, serie: /série|feuilleton/i, livre: /roman|livre|nouvelle|bande dessinée|manga|essai|récit/i };
+// (court : courts métrages et épisodes de séries d'anthologie comme Black Mirror)
+const MOT_CLE = { film: "film", jeu: "jeu vidéo", serie: "série télévisée", livre: "roman", court: "" };
+const ATTENDU = { film: /film|téléfilm/i, court: /court|film|épisode/i, jeu: /jeu/i, serie: /série|feuilleton/i, livre: /roman|livre|nouvelle|bande dessinée|manga|essai|récit/i };
 // Pages à écarter : personnages, lieux, saisons, épisodes…
 const PAS_UNE_OEUVRE = /personnage|lieu fictif|famille fictive|planète|organisation|univers de fiction|^épisode/i;
 
@@ -120,6 +121,7 @@ const majuscule = t => t ? t[0].toUpperCase() + t.slice(1) : t;
 // les films, jeux, séries ou livres selon le type de la fiche.
 const NATURES = {
   film: ["Q11424", "Q24869", "Q202866", "Q506240", "Q93204", "Q24862", "Q229390", "Q20650540", "Q17517379", "Q1054574", "Q2484376", "Q28968511"],
+  court: ["Q24862", "Q11424", "Q202866", "Q21191270", "Q1983062", "Q17517379", "Q20650540"],
   jeu: ["Q7889", "Q865493", "Q4393107", "Q21125433", "Q1066707"],
   serie: ["Q5398426", "Q1259759", "Q526877", "Q63952888", "Q117467246", "Q581714", "Q15416"],
   livre: ["Q7725634", "Q8261", "Q47461344", "Q571", "Q1004", "Q14406742", "Q21198342", "Q8274", "Q725377", "Q277759", "Q1667921", "Q49084", "Q35760", "Q1760610", "Q747381", "Q10992055", "Q867335"]
@@ -176,7 +178,7 @@ async function enrichirJeux(pages, resultats, signal) {
 function duBonType(pages, type, strict = false) {
   if (strict) pages = pages.filter(p => p.description);   // « Voir aussi » : seulement les pages bien décrites
   return pages.filter(p => !/^(liste|saison \d|épisode|\d{4} en )/i.test(p.title) && !/év[éè]nements|^liste/i.test(p.description || "")
-    && !PAS_UNE_OEUVRE.test(p.description || "")
+    && !(type !== "court" && PAS_UNE_OEUVRE.test(p.description || ""))   // (les épisodes sont permis pour les courts / anthologies)
     && (!p.description || ATTENDU[type].test(p.description)));
 }
 // Transforme des pages en résultats, avec une affiche EN HAUTEUR quand il y en a une.
@@ -324,6 +326,67 @@ async function resultatsDe(pages, type, signal) {
   return completerSeries(res, type, signal);
 }
 
+// ---------- Saisons d'une série (TVmaze) ----------
+// [{ n, image, annee }] : numéro, affiche de la saison (quand TVmaze en a une), année de diffusion
+export async function saisonsTVmaze(titre, signal) {
+  const s = await lireJSON(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(titre)}&embed=seasons`, signal);
+  return (s?._embedded?.seasons || []).filter(x => x.number > 0).map(x => ({
+    n: x.number, image: x.image?.original || x.image?.medium || "", annee: annee(x.premiereDate)
+  }));
+}
+
+// ---------- Sagas (tomes d'une même série) ----------
+// Wikidata dit si une œuvre « fait partie de la série » X (propriété P179), et souvent à quel
+// numéro (qualificatif P1545). Renvoie { wd, saga: { wd, nom } | null, rang } (wd = identifiant Wikidata).
+// wdConnu : identifiant déjà trouvé une fois (on évite alors la recherche Wikipédia).
+export async function infosSaga(type, titre, annee, wdConnu = "", signal) {
+  let wd = wdConnu;
+  const motCle = MOT_CLE[type] ?? "";
+  // 1. Wikipédia en français (avec l'année, puis sans : l'année gêne parfois la recherche)
+  for (const q of annee ? [`${titre} ${annee} ${motCle}`, `${titre} ${motCle}`] : [`${titre} ${motCle}`]) {
+    if (wd) break;
+    const pages = exactDabord(duBonType(await pagesWiki(q.trim(), signal, 8), type), titre);
+    // seulement si le titre correspond vraiment (sinon on risque de ranger la fiche dans une autre saga)
+    const p = pages.find(x => memeTitre(sansParentheses(x.title), titre));
+    wd = p?.pageprops?.wikibase_item || "";
+  }
+  // 2. Directement dans Wikidata (œuvres sans article en français, comme beaucoup d'épisodes)
+  if (!wd) {
+    const r = await lireJSON(wdAPI({ action: "wbsearchentities", search: titre, language: "fr", uselang: "fr", type: "item", limit: "8" }), signal);
+    const ok = (r.search || []).find(x => sansPonctuation(x.label || "") === sansPonctuation(titre) && ATTENDU_WD[type].test(x.description || ""));
+    wd = ok?.id || "";
+  }
+  if (!wd) return { wd: "", saga: null, rang: null };
+  const e = (await entites([wd], "claims", signal))[wd];
+  const series = (e?.claims?.P179 || []).map(c => ({
+    q: c.mainsnak?.datavalue?.value?.id,
+    rang: parseFloat(c.qualifiers?.P1545?.[0]?.datavalue?.value) || null
+  })).filter(x => x.q);
+  if (!series.length) return { wd, saga: null, rang: null };
+  // Seulement de vraies séries (de films, de romans, de jeux, franchises…), pas des listes ou classements
+  // (« Liste des films Pixar », « 100 meilleurs films du siècle »…)
+  const ents = await entites(series.map(x => x.q), "claims|labels|sitelinks", signal);
+  const nomDe = q => sansParentheses(ents[q]?.sitelinks?.frwiki?.title || libelle(ents[q]) || "");
+  const bonnes = series.filter(x => {
+    const natures = valeurs(ents[x.q], "P31").map(v => v.id);
+    return natures.some(n => NATURES_SERIE.includes(n)) && !/^(liste|list)\b|\d+ (meilleur|greatest|best)/i.test(nomDe(x.q));
+  });
+  if (!bonnes.length) return { wd, saga: null, rang: null };
+  // Plusieurs séries possibles (ex. « phase 1 » d'un univers) : on préfère celle qui donne un numéro
+  const s = bonnes.find(x => x.rang != null) || bonnes[0];
+  const nom = nomDe(s.q).replace(/^(série|saga|cycle|franchise) (de |des |du )?/i, "");
+  return { wd, saga: nom ? { wd: s.q, nom: majuscule(nom) } : null, rang: s.rang };
+}
+// Description Wikidata attendue (français ou anglais) pour accepter un résultat trouvé directement dans Wikidata
+const ATTENDU_WD = {
+  film: /film/i, court: /court|film|épisode|episode|short/i, jeu: /jeu|video game/i,
+  serie: /série|series/i, livre: /roman|livre|manga|bande dessinée|novel|book|comic/i
+};
+// Natures Wikidata d'une « série » : série d'œuvres, de films, de romans, de jeux vidéo, de bandes dessinées,
+// franchise, trilogie, série télévisée (pour les épisodes d'anthologie)…
+const NATURES_SERIE = ["Q7725310", "Q24856", "Q1667921", "Q277759", "Q7058673", "Q196600", "Q21191019", "Q2266851", "Q14406742",
+  "Q20937557", "Q5398426", "Q1259759", "Q117467246", "Q53764732", "Q1792379", "Q867335", "Q3248417", "Q105420"];
+
 // ---------- Date de sortie (bouton « À sa sortie ») ----------
 // Renvoie le mois de sortie "AAAA-MM" (ou l'année "AAAA" si le mois est inconnu, "" si rien).
 // Films et jeux : Wikidata (P577), en préférant la sortie en France (qualificatif P291 = France),
@@ -406,7 +469,7 @@ export async function voirAussi(m, signal) {
       return sansDoublons(deLui.map(versLivre)).slice(0, 20);
     }
     // Phrase exacte dans le texte des pages : « réalisé par Ari Aster »…
-    const phrase = { film: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
+    const phrase = { film: `"réalisé par ${c}"`, court: `"réalisé par ${c}"`, jeu: `"développé par ${c}"`, serie: `"diffusée sur ${c}"` }[type];
     const pages = (await seulementOeuvres(duBonType(await pagesWiki(`${phrase} ${motCle}`, signal, 50), type, true), type, signal)).slice(0, 24);
     return sansDoublons(await resultatsDe(pages, type, signal)).slice(0, 20);
   })().catch(() => []);

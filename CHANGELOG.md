@@ -1,5 +1,17 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.1 — 2026-11-11
+- **Sagas** (livres, films, jeux, anthologies) :
+  - les tomes d'une même série sont repérés tout seuls (Wikidata « fait partie de la série », puis titres numérotés comme « Toy Story 2 ») ;
+  - au premier lancement, les fiches déjà là sont rassemblées en arrière-plan ; Réglages › « Rassembler les sagas » (bêta) relance la recherche ;
+  - affichage en **pile** (couverture + cartes décalées + nombre de tomes + petite barre d'avancement) ; toucher la pile la déroule sur place ;
+  - chaque saga a sa note et son affiche (par défaut celle du tome 1) ;
+  - fiche › ⋯ › « Saga… » : ranger dans une saga, en sortir, changer le numéro ; pile déroulée › ⋯ : renommer, défaire.
+- **Bouton pile** dans la barre d'outils : groupé (piles, séries d'un bloc) ou séparé (chaque tome, chaque saison à part).
+- **Séries saison par saison** : chaque saison a son statut (vue, en cours, à voir, pas vue en gris), sa note, son image (TVmaze) et ses dates ; une série apparaît dans chaque page concernée (dès qu'une saison est vue : dans Vues), avec un bandeau d'une case par saison et un petit résumé (« S1–2 vues · S3 en cours ») ; les dates des saisons vont dans la frise.
+- **Courts & anthologies** : nouveau type caché sous l'onglet Séries (appui long sur l'onglet : Séries / Courts & anthologies / mélanger les courts dans les séries). Chaque court métrage ou épisode d'anthologie est une fiche notée seule ; les épisodes d'une anthologie forment une pile.
+- Excel : colonnes « Saga » et « Tome », onglets « Sagas » et « Saisons » (relus à l'import).
+
 ## v0.10.0 — 2026-11-11
 - Trier mes fiches › nouvel onglet **Vérifier** : je colle une liste (une ligne par titre : `Type | Titre | Année | Statut | Note | Date | Avis`, seul le titre est obligatoire).
   - Chaque ligne devient une fiche « à vérifier », cachée partout ailleurs (listes, recherche, frise, tri).
