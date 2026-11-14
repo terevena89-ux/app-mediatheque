@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.3 — 2026-11-14
+- **Jeux : trois façons de les montrer**, avec un nouveau bouton dans la barre d'outils (à gauche des vues) qui passe de l'une à l'autre :
+  - **Cartouches et disques** : la cartouche (Switch, DS, Game Boy…) ou le disque (PlayStation, Wii, Xbox, PC…) ;
+  - **Boîtes** : le boîtier ou la boîte en carton du support (boîtier Switch, DS noir, 3DS blanc, carton Game Boy / Super Nintendo, grande boîte PC…) ;
+  - **Affiches** : la jaquette toute simple, comme avant.
+- **Une image par façon** : fiche d'un jeu › toucher l'affiche › onglets « Affiche », « Cartouche / disque », « Boîte ». Chaque onglet a sa propre image (recherche, Google Images, Coller, Fichier, « enlever ») ; sans image, c'est l'affiche qui sert.
+- **Plus de relief** en mosaïque : cartouches légèrement tournées (vraie perspective), tranche plus épaisse, ombre portée. À la souris, la cartouche survolée se soulève et penche en suivant le pointeur, avec un reflet qui bouge ; au doigt, elle bascule quand on appuie.
+
 ## v0.10.2 — 2026-11-14
 - **Jeux en cartouches** : dans les listes (Liste, Compacte, Mosaïque, tableau PC, piles de sagas), chaque jeu prend la forme de son support, avec sa jaquette en guise d'étiquette :
   - Switch (carte sombre, rouge pour la Switch 2), DS / 3DS, Game Boy, Game Boy Advance, vieilles consoles à cartouche ;

@@ -4,7 +4,7 @@
 // même sans réseau. (Les données, elles, sont gérées par Firebase.)
 // À CHAQUE NOUVELLE VERSION : changer le numéro ci-dessous.
 // =========================================================
-const CACHE = "mediatheque-v0.10.2";
+const CACHE = "mediatheque-v0.10.3";
 
 // Fichiers de l'appli à garder dès l'installation
 const FICHIERS = [

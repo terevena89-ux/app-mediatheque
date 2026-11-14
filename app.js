@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.2";
+const VERSION = "v0.10.3";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -256,6 +256,11 @@ function normaliser(id, d) {
     // true = j'ai choisi / modifié / enlevé l'affiche moi-même (sinon : affiche trouvée automatiquement).
     // Rien d'affiché pour l'instant : servira à passer en revue les affiches automatiques.
     afficheChoisie: !!d.afficheChoisie,
+    // Jeux (v0.10.3) : images à part pour la cartouche / le disque (cart) et pour la boîte (boite) ; vide = l'affiche
+    imgs: Object.fromEntries(["cart", "boite"].map(k => [k, {
+      image: lienValide(d.imgs?.[k]?.image),
+      miniature: typeof d.imgs?.[k]?.miniature === "string" && d.imgs[k].miniature.startsWith("data:image/") ? d.imgs[k].miniature : ""
+    }])),
     // true = ajoutée par « Trier › Vérifier » et pas encore validée : cachée partout ailleurs
     aVerifier: !!d.aVerifier,
     // Saga : identifiant de la saga, numéro de tome ; wd = identifiant Wikidata de l'œuvre (gardé pour ne pas le rechercher) ;
@@ -405,40 +410,62 @@ const initiale = t => (String(t).replace(/^(le |la |les |l'|the )/i, "").match(/
 // hd = grande affiche (fiche) : on prend l'image du site, plus nette, et la copie gardée
 // sert de secours (hors ligne, ou si le site a changé l'adresse).
 function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
-  const src = hd && m.image ? m.image : (m.miniature || m.image);
+  // Jeux, dans les listes (cartouche = true) : l'affiche devient l'étiquette d'une cartouche, d'un disque
+  // ou d'une boîte à la forme du support (bouton de la barre d'outils : cartouches / boîtes / affiches)
+  const mode = cartouche ? modeJeux() : "affiche", forme = mode !== "affiche" && formeCartouche(m, mode);
+  const perso = forme && (m.imgs?.[mode]?.miniature || m.imgs?.[mode]?.image);   // image choisie pour ce mode
+  const src = perso || (hd && m.image ? m.image : (m.miniature || m.image));
   const secours = hd && m.image && m.miniature && m.id ? `secoursImage(this,'${m.id}')` : "this.remove()";
   const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
-  // Jeux, dans les listes (cartouche = true) : l'affiche devient l'étiquette d'une cartouche
-  // (ou d'un boîtier) à la forme du support
-  const forme = cartouche && formeCartouche(m);
   if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
   return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
 }
-// Forme de la cartouche d'après le nom du support (les supports sont modifiables dans Réglages :
-// on reconnaît donc des mots, pas une liste fixe). Support inconnu ou absent : affiche normale.
+// Forme d'après le nom du support (les supports sont modifiables dans Réglages : on reconnaît donc des mots,
+// pas une liste fixe). Pour chaque support : [mots, forme « cartouche / disque », forme « boîte »].
+// Support inconnu ou absent : affiche normale.
 const CARTOUCHES = [
-  [/switch ?2/, "switch s2"], [/switch/, "switch"],
-  [/3ds/, "ds d3"], [/\bn?ds\b|\bdsi\b|nintendo ds/, "ds"],
-  [/advance|\bgba\b/, "gba"], [/game ?boy|\bgbc?\b/, "gb"],
-  [/ps ?5|playstation 5/, "boitier br ps5"], [/ps ?4|playstation 4/, "boitier br ps4"], [/ps ?3|playstation 3/, "boitier br ps3"],
-  [/ps ?2|playstation 2/, "boitier ps2"], [/psp/, "boitier br ps3"], [/vita/, "boitier br ps4"],
-  [/ps ?1|ps ?one|psx|playstation|dreamcast|saturn|mega ?cd/, "cd"],
-  [/wii ?u/, "boitier wiiu"], [/wii/, "boitier wii"], [/gamecube|\bn?gc\b/, "boitier gc"], [/xbox/, "boitier xbox"],
-  [/\bs?nes\b|super nintendo|nintendo 64|\bn64\b|mega ?drive|genesis|master system|atari|neo ?geo|famicom|cartouche/, "retro"],
-  [/\bpc\b|steam|\bmac\b|linux|windows|ordi/, "pc"],
-  [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel"]
+  [/switch ?2/, "switch s2", "boitier bsw2"], [/switch/, "switch", "boitier bsw"],
+  [/3ds/, "ds d3", "boitier b3ds"], [/\bn?ds\b|\bdsi\b|nintendo ds/, "ds", "boitier bds"],
+  [/advance|\bgba\b/, "gba", "carton"], [/game ?boy|\bgbc?\b/, "gb", "carton"],
+  [/ps ?5|playstation 5/, "disque", "boitier br ps5"], [/ps ?4|playstation 4/, "disque", "boitier br ps4"], [/ps ?3|playstation 3/, "disque", "boitier br ps3"],
+  [/ps ?2|playstation 2/, "disque", "boitier ps2"], [/psp/, "disque mini", "boitier br ps3"], [/vita/, "ds", "boitier br ps4"],
+  [/ps ?1|ps ?one|psx|playstation/, "disque noir", "cd"], [/dreamcast|saturn|mega ?cd/, "disque", "cd"],
+  [/wii ?u/, "disque", "boitier wiiu"], [/wii/, "disque", "boitier wii"], [/gamecube|\bn?gc\b/, "disque mini", "boitier gc"], [/xbox/, "disque", "boitier xbox"],
+  [/\bs?nes\b|super nintendo|nintendo 64|\bn64\b|mega ?drive|genesis|master system|atari|neo ?geo|famicom|cartouche/, "retro", "carton large"],
+  [/\bpc\b|steam|\bmac\b|linux|windows|ordi/, "disque", "pc"],
+  [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel", "tel"]
 ];
-// dessus = petits badges (cœur, « rejouer ») : posés sur la cartouche, pas dans le vide au-dessus d'elle
+// Mode d'affichage des jeux, gardé sur cet appareil : cart (cartouches et disques), boite, affiche
+const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boite" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
+const modeJeux = () => MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
 const jaquette = (m, classe = "", dessus = "") => vignette(m, classe, false, true, dessus);
-function formeCartouche(m) {
-  if (m.type !== "jeu" || !m.support) return "";
+function formeCartouche(m, mode = modeJeux()) {
+  if (m.type !== "jeu" || !m.support || mode === "affiche") return "";
   const s = simplifier(m.support);
-  return (CARTOUCHES.find(([motif]) => motif.test(s)) || [])[1] || "";
+  return (CARTOUCHES.find(([motif]) => motif.test(s)) || [])[mode === "boite" ? 2 : 1] || "";
 }
 window.secoursImage = (img, id) => {
   const m = medias.get(id);
   if (m?.miniature && img.src !== m.miniature) img.src = m.miniature; else img.remove();
 };
+
+// Relief des cartouches (mosaïque) : à la souris, la cartouche survolée penche vers le pointeur ;
+// son épaisseur (--sx, --sy) et son reflet (--gx, --gy) suivent. Au doigt : elle se soulève quand on appuie (style.css).
+let penchee = null;
+function redresser() { if (penchee) { penchee.classList.remove("penche"); penchee.removeAttribute("style"); penchee = null; } }
+document.addEventListener("pointermove", e => {
+  if (e.pointerType !== "mouse") return;
+  const o = e.target.closest?.(".mc")?.querySelector(".vg.ct > .ct-o") || null;
+  if (o !== penchee) redresser();
+  if (!o) return;
+  penchee = o;
+  const r = o.parentNode.getBoundingClientRect();
+  const x = Math.max(-.5, Math.min(.5, (e.clientX - r.left) / r.width - .5)), y = Math.max(-.5, Math.min(.5, (e.clientY - r.top) / r.height - .5));
+  o.classList.add("penche");
+  o.style.cssText = `--ry:${(x * 44).toFixed(1)}deg;--rx:${(-y * 32).toFixed(1)}deg;--sx:${(x * 4.4).toFixed(2)}px;--sy:${(y * 4.4).toFixed(2)}px;--gx:${(50 - x * 90).toFixed(0)}%;--gy:${(50 - y * 90).toFixed(0)}%`;
+}, { passive: true });
+document.addEventListener("pointerleave", redresser);
+window.addEventListener("scroll", redresser, { capture: true, passive: true });
 
 // ---------- 3. Stockage ----------
 // Rangement dans Firestore :
@@ -854,7 +881,7 @@ function carteSaisonHTML(m, s) {
 // --- Piles de sagas (mode groupé) : toucher la pile la déroule sur place ---
 const MOT_TOMES = { livre: "tomes", film: "films", jeu: "jeux", court: "épisodes" };
 function pileHTML(s, mosa) {
-  const tomes = tomesDe(s), ouverte = ui.sagasOuvertes.has(s.id), couv = { ...couvertureSaga(s, tomes), type: s.type, support: tomes.find(formeCartouche)?.support };   // jeux : cartouche du 1er tome qui a un support
+  const tomes = tomesDe(s), ouverte = ui.sagasOuvertes.has(s.id), couv = { ...couvertureSaga(s, tomes), type: s.type, support: tomes.find(t => formeCartouche(t))?.support };   // jeux : cartouche du 1er tome qui a un support
   const finis = tomes.filter(t => t.statut === "fini").length;
   const prog = `<span class="prog">${tomes.map(t => `<i class="b-${t.statut}"></i>`).join("")}</span>`;
   if (mosa) {
@@ -984,6 +1011,7 @@ function rendreOutils() {
     <button class="btn outil" data-action="menu-tri">${ic("tri", "s")}${tri.nom}${ic("bas", "s fl")}</button>
     <span class="sp"></span>
     ${TYPES_SAGA.includes(ui.type) || ui.type === "serie" ? `<button class="pile-btn ${groupe(ui.type) ? "on" : ""}" data-action="pile" title="${groupe(ui.type) ? (ui.type === "serie" ? "Séries groupées (toucher : saisons séparées)" : "Sagas groupées (toucher : tomes séparés)") : "Séparé (toucher : grouper)"}" aria-label="Grouper ou séparer">${ic("pile", "s")}</button>` : ""}
+    ${ui.type === "jeu" ? (x => `<button class="pile-btn on" data-action="mode-jeux" title="${x.nom} (toucher pour changer)" aria-label="Forme des jeux : ${x.nom}">${ic(x.icone, "s")}</button>`)(MODES_JEUX.find(x => x.id === modeJeux())) : ""}
     <div class="vues"><i class="vind"></i>${vues.map(v => `<button data-vue="${v.id}" class="${v.id === vue ? "on" : ""}" title="${v.nom}" aria-label="${v.nom}">${ic(v.icone, "s")}${estPC() && v.id === vue ? `<span>${v.nom}</span>` : ""}</button>`).join("")}</div>`;
   poserPastilleVues();
 }
@@ -1322,12 +1350,13 @@ function chargerVoirAussi(m) {
 // plus « Photo / fichier » et « Coller un lien ».
 let affChoix = null;   // { id, liste: [{ image, legende }] }
 function ouvrirAffiche(m) {
-  affChoix = { id: m.id, liste: [] };
+  affChoix = { id: m.id, liste: [], cible: "affiche" };   // cible (jeux) : affiche, cart ou boite
   const v2 = $("voile2");
   v2.className = "voile " + (estPC() ? "centre" : "bas");
   v2.innerHTML = `<div class="fenetre affiches" role="dialog" aria-label="Choisir l'affiche">
     <div class="fhd"><h2>Choisir l'affiche</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
-    <div class="aff-info">${ic("info", "s")}<span>Seulement des affiches en hauteur : les images larges (logos, captures) sont écartées.</span></div>
+    ${m.type === "jeu" ? `<div class="seg aff-cible" id="aff-cible"></div>` : ""}
+    <div class="aff-info">${ic("info", "s")}<span id="aff-info-txt"></span></div>
     <div class="aff-grille" id="aff-grille"></div>
     <div class="aff-lien" id="aff-lien" hidden><input id="aff-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false">
       <button class="btn pri" data-action="aff-url-ok">OK</button></div>
@@ -1347,17 +1376,27 @@ function ouvrirAffiche(m) {
   }).catch(() => majGrilleAffiches(m, false, true));
 }
 // Une image qui n'est pas en hauteur (logo, couverture vide…) est retirée de la grille
-window.verifierHauteur = img => { if (img.naturalHeight < img.naturalWidth * 1.15) img.closest(".aff")?.remove(); };
+// (pour l'image d'une cartouche ou d'une boîte de jeu, on garde tout : les étiquettes sont souvent larges)
+window.verifierHauteur = img => { if (affChoix?.cible === "affiche" && img.naturalHeight < img.naturalWidth * 1.15) img.closest(".aff")?.remove(); };
+const NOMS_CIBLE = { affiche: "Affiche", cart: "Cartouche / disque", boite: "Boîte" };
+// L'image actuelle de la cible choisie (jeux : affiche, cartouche ou boîte)
+const imageCible = (m, cible = affChoix?.cible || "affiche") => cible === "affiche" ? { image: m.image, miniature: m.miniature } : (m.imgs?.[cible] || { image: "", miniature: "" });
 function majGrilleAffiches(m, enCours, erreur) {
   if (!$("aff-grille")) return;
-  const actuelle = (m.miniature || m.image) ? `<div class="aff"><span class="aff-v on">${vignette(m)}<span class="coche">${ic("ok")}</span></span><small>Actuelle</small></div>` : "";
-  $("aff-grille").innerHTML = actuelle + affChoix.liste.map((a, i) => `<button class="aff" data-aff="${i}">
+  const cible = affChoix.cible, act = imageCible(m);
+  if ($("aff-cible")) $("aff-cible").innerHTML = Object.entries(NOMS_CIBLE).map(([k, n]) => `<button data-aff-cible="${k}" aria-pressed="${k === cible}">${n}</button>`).join("");
+  $("aff-info-txt").textContent = cible === "affiche" ? "Seulement des affiches en hauteur : les images larges (logos, captures) sont écartées."
+    : `Image montrée en mode « ${cible === "cart" ? "Cartouches et disques" : "Boîtes"} ». Sans image ici, c'est l'affiche qui sert.`;
+  const actuelle = (act.miniature || act.image) ? `<div class="aff"><span class="aff-v on">${vignette({ titre: m.titre, ...act })}<span class="coche">${ic("ok")}</span></span><small>Actuelle${cible !== "affiche" ? ` · <button class="lien-txt" data-action="aff-enlever">enlever</button>` : ""}</small></div>` : "";
+  $("aff-grille").innerHTML = actuelle + affChoix.liste.filter(a => a.image !== act.image).map(a => `<button class="aff" data-aff="${affChoix.liste.indexOf(a)}">
       <span class="aff-v">${vignette({ titre: m.titre, image: a.image, miniature: "" }).replace(' loading="lazy"', "").replace("<img ", `<img onload="verifierHauteur(this)" `)}</span><small>${echapper(a.legende)}</small></button>`).join("")
     + (enCours ? `<div class="aff-attente">Recherche…</div>` : erreur ? `<div class="aff-attente">Recherche indisponible</div>`
       : !affChoix.liste.length ? `<div class="aff-attente">Aucune autre affiche trouvée</div>` : "");
 }
 // fermer = false : on reste où on est (mode Trier)
 function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
+  const cible = affChoix?.id === m.id ? affChoix.cible : "affiche";
+  if (cible !== "affiche") return appliquerImageJeu(m, cible, { image, miniature });
   const avant = { image: m.image, miniature: m.miniature, afficheChoisie: m.afficheChoisie };
   m.image = image; m.miniature = miniature; m.mq = 2; m.afficheChoisie = true;
   ecrireMedia(m);
@@ -1367,6 +1406,17 @@ function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
   });
   if (fermer) retour();
   afficherToast("Affiche changée", () => { Object.assign(m, avant); ecrireMedia(m); rafraichir(); if (tri) majTri(); });
+}
+// Jeux : image de la cartouche / du disque ou de la boîte (la fenêtre reste ouverte pour enchaîner les trois)
+function appliquerImageJeu(m, cible, { image = "", miniature = "" }) {
+  const avant = { ...m.imgs[cible] };
+  const poser = v => { m.imgs = { ...m.imgs, [cible]: v }; ecrireMedia(m); rafraichir(); majGrilleAffiches(m, false); };
+  poser({ image, miniature });
+  if (image && !miniature) copierImage(image).then(mini => {
+    const x = medias.get(m.id);
+    if (mini && x && x.imgs[cible].image === image) { x.imgs = { ...x.imgs, [cible]: { image, miniature: mini } }; ecrireMedia(x); rafraichir(); }
+  });
+  afficherToast(image || miniature ? `Image « ${NOMS_CIBLE[cible]} » changée` : `Image « ${NOMS_CIBLE[cible]} » enlevée`, () => poser(avant));
 }
 // Google Images : ouvre la recherche « titre (année) affiche / jaquette / couverture » dans un nouvel onglet.
 // Là-bas : appui long sur l'image › « Copier l'adresse de l'image », puis revenir et toucher « Coller ».
@@ -2844,6 +2894,10 @@ document.addEventListener("click", e => {
   if (d.sagaMenu) { const s = sagaPar(d.sagaMenu); if (s) menuSaga(el, s); return; }
   if (d.sagaAff) { const s = sagaPar(d.sagaAff); if (s) { s.image = lienValide(d.url); sauverDonnees(); fermerVoile2(); rendreContenu(); } return; }
   if (d.action === "saga-aff-fermer") { fermerVoile2(); return; }
+  if (d.action === "mode-jeux") {
+    const suivant = MODES_JEUX[(MODES_JEUX.findIndex(x => x.id === modeJeux()) + 1) % MODES_JEUX.length];
+    changerReglage("jeux", suivant.id); rendreOutils(); rendreContenu(); vibrer(); afficherToast(suivant.nom); return;
+  }
   if (d.action === "pile") { changerReglage("groupes", { ...(reglages.groupes || {}), [ui.type]: !groupe(ui.type) }); rendreOutils(); rendreContenu(); vibrer(); return; }
   if (d.fiche && !el.closest("#voile")) {
     if (adresse.fiche === d.fiche) return;
@@ -3002,6 +3056,7 @@ document.addEventListener("click", e => {
     // --- Choisir l'affiche ---
     case "choisir-affiche": if (m) aller(adresseFiche(m.id) + "&affiche"); return;
     case "aff-fichier": $("aff-fichier").click(); return;
+    case "aff-enlever": if (m && affChoix && affChoix.cible !== "affiche") appliquerImageJeu(m, affChoix.cible, {}); return;
     case "aff-lien": $("aff-lien").hidden = false; $("aff-url").focus(); return;
     case "aff-google": if (m) ouvrirGoogleImages(m); return;
     case "aff-coller": if (m) collerAffiche(m, true, $("aff-lien")); return;
@@ -3104,6 +3159,7 @@ document.addEventListener("click", e => {
     else rendreContenu();
     return;
   }
+  if (d.affCible && affChoix && m) { affChoix.cible = d.affCible; majGrilleAffiches(m, false); return; }
   if (d.aff !== undefined && affChoix && m) { const a = affChoix.liste[+d.aff]; if (a) appliquerAffiche(m, { image: a.image }); return; }
   if (d.moRes !== undefined && brouillon?.affiches) {
     const r = brouillon.affiches[+d.moRes];
@@ -3537,7 +3593,7 @@ async function importerExcel(champ) {
         revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], notePlusTard: simplifier(l["Note plus tard"]) === "oui", coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
+        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, imgs: a?.imgs, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
         saisons: listeSaisons ? { actif: true, liste: listeSaisons }
           : saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
         saga: colSaga ? sagaDe(type, l["Saga"]) : (a?.saga || ""), tome: colSaga ? l["Tome"] : a?.tome, wd: a?.wd, sagaCherchee: !!l["Saga"] || a?.sagaCherchee, sagaManuel: a?.sagaManuel,
