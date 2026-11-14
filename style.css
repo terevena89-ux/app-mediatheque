@@ -904,3 +904,128 @@ body.pc .pile-btn { height: 28px; box-shadow: none; border: 1px solid var(--line
 .saisons-bas { display: flex; gap: 6px; padding-top: 8px; }
 .dot.b-avoir, .dot.b-arrete { opacity: 1 !important; }
 .dot.b-arrete { background: var(--faint) !important; }
+
+/* =========================================================
+   v0.10.2 : jeux en forme de cartouche (ou de boîtier) selon le support.
+   .vg.ct  = la place habituelle de l'affiche (même taille qu'avant)
+   .ct-c   = la coque en plastique (forme, couleur) ; .ct-e = l'étiquette (l'affiche)
+   Les petits détails sont en « cqw » (centièmes de la largeur de la coque) :
+   ils rétrécissent avec la cartouche, de la mosaïque à la vue compacte.
+   ========================================================= */
+.vg.ct { overflow: visible; border-radius: 0; box-shadow: none; }
+/* .ct-o = la silhouette (taille, couleurs, épaisseur) ; .ct-c = la coque découpée ; .ct-e = l'étiquette */
+.ct-o { position: relative; width: var(--w, 100%); aspect-ratio: var(--ar, 2 / 3); --cc: #33353B; --ep: color-mix(in srgb, var(--cc) 55%, #000);
+  filter: drop-shadow(var(--sx, .8px) var(--sy, 1px) 0 var(--ep)); }   /* l'épaisseur : la même forme, plus sombre, décalée */
+/* Mosaïque : vraie perspective. La cartouche est un peu tournée (on voit sa tranche à droite et en bas),
+   l'épaisseur est faite de 4 couches décalées, et une ombre douce la décolle de la page. */
+.mc .ct-o { --sx: .9px; --sy: .9px; transform: perspective(520px) rotateY(var(--ry, 9deg)) rotateX(var(--rx, -4deg)); transform-origin: 50% 60%;
+  transition: transform .45s var(--ressort), filter .3s;
+  filter: drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep))
+    drop-shadow(3px 5px 4px rgba(var(--oc), .32)); }
+/* Souris : la cartouche survolée se soulève et suit le pointeur (angles posés par app.js) */
+.mc .ct-o.penche { z-index: 5; transition: transform .08s linear; transform: perspective(520px) translateY(-5px) scale(1.07) rotateY(var(--ry)) rotateX(var(--rx));
+  filter: drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep)) drop-shadow(var(--sx) var(--sy) 0 var(--ep))
+    drop-shadow(6px 12px 9px rgba(var(--oc), .38)); }
+/* Doigt : elle bascule quand on appuie */
+@media (hover: none) { .mc:active .ct-o { --ry: -16deg; --rx: 8deg; --sx: -1.2px; --sy: -.6px; transition-duration: .12s; } }
+.mc:has(.ct):active { transform: none; }
+.ct-c { position: absolute; inset: 0; container-type: inline-size; overflow: hidden; clip-path: var(--clip, none); border-radius: var(--rad, 5% / 4%);
+  background: var(--relief, linear-gradient(135deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, .22))) var(--cc);
+  box-shadow: var(--biseau, inset 1px 1px 0 rgba(255, 255, 255, .4), inset -1px -1px 0 rgba(0, 0, 0, .3)); }
+.ct-c::before, .ct-c::after { content: ""; position: absolute; pointer-events: none; }
+.ct-e { position: absolute; inset: var(--et, 8%); display: grid; place-items: center; overflow: hidden; border-radius: 2cqw; }
+/* étiquette un peu enfoncée dans la coque, avec un reflet */
+.ct-e::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(125deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, 0) 38%);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .55), inset 1px 0 1px rgba(0, 0, 0, .3); }
+/* au survol : un reflet rond qui se déplace à l'opposé du pointeur */
+.penche .ct-e::after { background: radial-gradient(circle at var(--gx, 30%) var(--gy, 20%), rgba(255, 255, 255, .42), rgba(255, 255, 255, 0) 55%); }
+.mc .vg.ct { align-items: end; }   /* posée en bas, comme sur une étagère */
+body.pc .mosa .vg.ct { border-radius: 0; }
+/* Piles de sagas : les cartes décalées derrière suivent la forme de la cartouche */
+.mc.pile .vg.ct { box-shadow: none; filter: drop-shadow(3px 3px 0 color-mix(in srgb, var(--muted) 55%, var(--bg))) drop-shadow(3px 3px 0 color-mix(in srgb, var(--muted) 35%, var(--bg))); }
+.pile-vg:has(.ct)::before, .pile-vg:has(.ct)::after { display: none; }
+.pile-vg .vg.ct { box-shadow: none; filter: drop-shadow(2px -2px 0 color-mix(in srgb, var(--muted) 55%, var(--bg))) drop-shadow(2px -2px 0 color-mix(in srgb, var(--muted) 35%, var(--bg))); }
+
+/* Switch : petite carte sombre (rouge pour la Switch 2), encoche en haut */
+.ct-switch { --ar: 21 / 31; --cc: #2A2C31; --et: 13% 7% 5% 7%; --rad: 8% / 5.5%; }
+.ct-switch > .ct-c::before { top: 4.5%; left: 36%; width: 28%; height: 3%; border-radius: 2cqw; background: rgba(0, 0, 0, .4); }
+.ct-s2 { --cc: #C4212C; }
+/* DS / 3DS : carte presque carrée, coin coupé, stries en bas */
+.ct-ds { --w: 78%; --ar: 33 / 35; --cc: #3B3C42; --et: 9% 7% 24% 7%; --clip: polygon(0 0, 100% 0, 100% 87%, 89% 100%, 0 100%); }
+.ct-ds > .ct-c::after { left: 28%; right: 28%; bottom: 7%; height: 9%; background: repeating-linear-gradient(90deg, rgba(255, 255, 255, .25) 0 1.6cqw, transparent 1.6cqw 4.4cqw); }
+.ct-d3 { --cc: #C9CACF; }
+.ct-d3 > .ct-c::after { background: repeating-linear-gradient(90deg, rgba(0, 0, 0, .28) 0 1.6cqw, transparent 1.6cqw 4.4cqw); }
+/* Game Boy : cartouche grise, stries en haut, coin entaillé */
+.ct-gb { --ar: 57 / 65; --cc: #B5B4AE; --et: 25% 9% 8% 9%; --clip: polygon(0 0, 89% 0, 89% 4.5%, 100% 4.5%, 100% 100%, 0 100%); }
+.ct-gb > .ct-c::before { top: 7%; left: 9%; right: 22%; height: 11%; border-radius: 2cqw; background: repeating-linear-gradient(180deg, rgba(0, 0, 0, .25) 0 1.2cqw, transparent 1.2cqw 3.4cqw); }
+/* Game Boy Advance : cartouche large aux épaules coupées */
+.ct-gba { --ar: 57 / 36; --cc: #55565E; --et: 15% 11% 13% 11%; --clip: polygon(5% 0, 95% 0, 95% 14%, 100% 21%, 100% 100%, 0 100%, 0 21%, 5% 14%); }
+/* Vieilles consoles à cartouche (NES, Super Nintendo, N64, Mega Drive…) : grosse cartouche grise striée sur les côtés */
+.ct-retro { --ar: 5 / 4; --cc: #A3A2A8; --et: 11% 17% 26% 17%; --rad: 7% 7% 3% 3% / 9% 9% 4% 4%; }
+.ct-retro > .ct-c::before, .ct-retro > .ct-c::after { top: 11%; bottom: 14%; width: 9%; background: repeating-linear-gradient(180deg, rgba(0, 0, 0, .25) 0 1.2cqw, transparent 1.2cqw 3.6cqw); }
+.ct-retro > .ct-c::before { left: 4%; }
+.ct-retro > .ct-c::after { right: 4%; }
+/* PS1 (et autres consoles à CD) : boîtier cristal, tranche noire striée à gauche, reflet */
+.ct-cd { --ar: 142 / 125; --cc: #101114; --et: 2.5% 2.5% 2.5% 12%; --rad: 2.5%; }
+.ct-cd .ct-e { border-radius: 1cqw; }
+.ct-cd > .ct-c::before { left: 2.5%; width: 7%; top: 5%; bottom: 5%; background: repeating-linear-gradient(180deg, rgba(255, 255, 255, .16) 0 .9cqw, transparent .9cqw 2.6cqw); }
+.ct-cd > .ct-c::after { inset: 0; z-index: 2; background: linear-gradient(115deg, rgba(255, 255, 255, .24), transparent 34%); }
+/* Boîtiers de disque (PS2 à PS5, Wii, GameCube, Xbox) : bandeau en haut avec le nom du support */
+.ct-boitier { --ar: 135 / 190; --cc: #17181C; --bande: #17181C; --txt: #D6D9FF; --et: 11.5% 3% 2.5% 5%; --rad: 3% / 2.2%; }
+.ct-br { --ar: 135 / 171; }
+.ct-boitier .ct-e { border-radius: 1cqw; }
+.ct-boitier > .ct-c::before { content: attr(data-s); top: 0; left: 0; right: 0; height: 10%; display: grid; place-items: center; background: var(--bande); color: var(--txt);
+  font-size: 6.5cqw; font-weight: 700; letter-spacing: .08em; line-height: 1; white-space: nowrap; overflow: hidden; }
+.ct-boitier > .ct-c::after { left: 0; top: 0; bottom: 0; width: 3.5%; background: linear-gradient(90deg, rgba(255, 255, 255, .3), transparent); }
+.ct-ps3 { --cc: #C6CACF; --bande: #111216; --txt: #fff; }
+.ct-ps4 { --cc: #2D69C7; --bande: #0C3B95; --txt: #fff; }
+.ct-ps5 { --cc: #2D69C7; --bande: #F3F4F6; --txt: #15171C; }
+.ct-wii { --cc: #F0F0F0; --bande: #F0F0F0; --txt: #7B7E84; }
+.ct-wiiu { --cc: #21A5D8; --bande: #1589B8; --txt: #fff; }
+.ct-gc { --cc: #17181C; --bande: #4B3B8F; --txt: #fff; }
+.ct-xbox { --cc: #3F9C33; --bande: #107C10; --txt: #fff; }
+/* PC : grande boîte en carton vue de trois quarts (la tranche à droite) */
+.ct-pc, .ct-carton { --ar: 3 / 4; --cc: transparent; --et: 5% 11% 0 0; --rad: 0; --biseau: none; --relief: none; --ep: transparent; }
+.ct-pc .ct-e, .ct-carton .ct-e { border-radius: 1cqw 0 0 1cqw; }
+.ct-pc > .ct-c::after, .ct-carton > .ct-c::after { right: 0; top: 0; bottom: 0; width: 11.5%; background: linear-gradient(90deg, #4A4C55, #24252B); clip-path: polygon(0 5%, 100% 0, 100% 95%, 0 100%); }
+/* Téléphone : icône d'appli aux coins très ronds */
+.ct-tel { --w: 92%; --ar: 1; --cc: transparent; --et: 0; --rad: 0; --biseau: none; --relief: none; --ep: transparent; }
+.ct-tel .ct-e { border-radius: 23%; }
+.ct-tel { --ep: rgba(0, 0, 0, .38); }
+/* boîte PC : le dessus et la tranche sont dessinés, pas besoin d'épaisseur en plus */
+/* Badges (cœur, « rejouer ») posés sur la cartouche */
+.ct-c .mc-coeur, .ct-c .mc-rev { z-index: 3; }
+.ct-c .mc-rev { top: 14%; }
+.ct-e > b { position: relative; }
+.ct-pc .mc-coeur, .ct-carton .mc-coeur { right: 14%; top: 8%; }
+
+/* ---------- v0.10.3 : mode « Boîtes » et disques ---------- */
+/* Boîtes en carton des consoles à cartouche : Game Boy (carrée), Super Nintendo, N64… (couchée) */
+.ct-carton { --ar: 1; }
+.ct-large { --ar: 7 / 5; --et: 7% 8% 0 0; }
+.ct-large > .ct-c::after { width: 8.5%; clip-path: polygon(0 7%, 100% 0, 100% 93%, 0 100%); }
+/* Boîtiers Switch (transparent, bandeau rouge ; tout rouge pour la Switch 2) et DS (noir) / 3DS (blanc) */
+.ct-bsw { --ar: 105 / 170; --cc: #D3D6DB; --bande: #E4000F; --txt: #fff; }
+.ct-bsw2 { --ar: 105 / 170; --cc: #C4212C; --bande: #C4212C; --txt: #fff; }
+.ct-bds { --ar: 135 / 123; --cc: #1D1E22; --bande: #1D1E22; --txt: #C9CCD3; --et: 13% 3% 3% 5%; }
+.ct-b3ds { --ar: 135 / 123; --cc: #F0F0F0; --bande: #F0F0F0; --txt: #C4212C; --et: 13% 3% 3% 5%; }
+.ct-bds > .ct-c::before, .ct-b3ds > .ct-c::before { height: 11.5%; }
+/* Disque (CD, DVD, Blu-ray) : l'image couvre le disque, trou au centre, reflets en éventail */
+.ct-disque { --w: 94%; --ar: 1; --cc: #C9CCD3; --et: 2.5%; --rad: 50%; }
+.ct-disque > .ct-c { -webkit-mask: radial-gradient(circle, transparent 6.4%, #000 7.2%); mask: radial-gradient(circle, transparent 6.4%, #000 7.2%); }
+.ct-disque .ct-e { border-radius: 50%; }
+.ct-disque .ct-e::after { box-shadow: none; background: conic-gradient(from 25deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, 0) 11%, rgba(255, 255, 255, 0) 44%, rgba(255, 255, 255, .3) 53%, rgba(255, 255, 255, 0) 65%, rgba(255, 255, 255, 0) 92%, rgba(255, 255, 255, .38)); }
+.ct-disque > .ct-c::after { left: 34%; top: 34%; width: 32%; height: 32%; z-index: 2; border-radius: 50%; background: radial-gradient(circle, #8E929B 0 26%, #E4E6EA 27% 62%, #B9BDC6 63% 100%); box-shadow: 0 0 0 .7cqw rgba(0, 0, 0, .22); }
+.ct-noir { --cc: #131417; }
+.ct-noir > .ct-c::after { background: radial-gradient(circle, #8E929B 0 26%, #2A2C32 27% 62%, #131417 63% 100%); }
+.ct-mini { --w: 70%; }
+.ct-disque, .mc .ct-disque { --sx: .45px; --sy: .55px; }
+.mc .penche.ct-disque .ct-e::after { background: conic-gradient(from calc(25deg + var(--ry, 0deg) * 3), rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 11%, rgba(255, 255, 255, 0) 44%, rgba(255, 255, 255, .4) 53%, rgba(255, 255, 255, 0) 65%, rgba(255, 255, 255, 0) 92%, rgba(255, 255, 255, .5)); }
+.ct-disque .mc-coeur { top: 12%; right: 12%; }
+/* Fenêtre « Choisir l'affiche » d'un jeu : Affiche / Cartouche / Boîte */
+.aff-cible { margin: 0 0 10px; }
+.lien-txt { color: var(--acc); font-weight: 600; text-decoration: underline; font-size: inherit; }
+/* Barre d'outils des jeux (un bouton de plus) : sur un petit écran, c'est le bouton de tri qui rétrécit */
+.outils .vues, .outils .pile-btn { flex-shrink: 0; }
+.outils .btn.outil[data-action="menu-tri"] { min-width: 44px; flex-shrink: 1; overflow: hidden; white-space: nowrap; justify-content: flex-start; }
