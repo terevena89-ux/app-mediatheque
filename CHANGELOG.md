@@ -5,6 +5,7 @@
   - Switch (carte sombre, rouge pour la Switch 2), DS / 3DS, Game Boy, Game Boy Advance, vieilles consoles à cartouche ;
   - PS1 (boîtier CD), PS2 à PS5, Wii, Wii U, GameCube, Xbox (boîtier avec le nom du support sur le bandeau) ;
   - PC (grande boîte), Téléphone (icône d'appli).
+- Petit effet de relief : épaisseur de la coque, lumière en haut à gauche, étiquette légèrement enfoncée avec un reflet.
 - Le support est reconnu d'après son nom (les supports ajoutés dans Réglages marchent aussi : « Xbox 360 », « Steam Deck »…). Sans support, ou avec « Autres » : jaquette normale, comme avant.
 
 ## v0.10.1 — 2026-11-11

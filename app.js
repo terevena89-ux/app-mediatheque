@@ -411,7 +411,7 @@ function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   // Jeux, dans les listes (cartouche = true) : l'affiche devient l'étiquette d'une cartouche
   // (ou d'un boîtier) à la forme du support
   const forme = cartouche && formeCartouche(m);
-  if (forme) return `<span class="vg ct ${classe}"><span class="ct-c ct-${forme.replace(/ /g, " ct-")}" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span>`;
+  if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
   return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
 }
 // Forme de la cartouche d'après le nom du support (les supports sont modifiables dans Réglages :
