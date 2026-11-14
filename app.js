@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.1";
+const VERSION = "v0.10.2";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -404,10 +404,36 @@ const initiale = t => (String(t).replace(/^(le |la |les |l'|the )/i, "").match(/
 // Affiche d'une fiche (copie gardée, sinon adresse web, sinon couleur + initiale).
 // hd = grande affiche (fiche) : on prend l'image du site, plus nette, et la copie gardée
 // sert de secours (hors ligne, ou si le site a changé l'adresse).
-function vignette(m, classe = "", hd = false) {
+function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   const src = hd && m.image ? m.image : (m.miniature || m.image);
   const secours = hd && m.image && m.miniature && m.id ? `secoursImage(this,'${m.id}')` : "this.remove()";
-  return `<span class="vg ${classe}" style="background:${degrade(m.titre)}"><b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}</span>`;
+  const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
+  // Jeux, dans les listes (cartouche = true) : l'affiche devient l'étiquette d'une cartouche
+  // (ou d'un boîtier) à la forme du support
+  const forme = cartouche && formeCartouche(m);
+  if (forme) return `<span class="vg ct ${classe}"><span class="ct-c ct-${forme.replace(/ /g, " ct-")}" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span>`;
+  return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
+}
+// Forme de la cartouche d'après le nom du support (les supports sont modifiables dans Réglages :
+// on reconnaît donc des mots, pas une liste fixe). Support inconnu ou absent : affiche normale.
+const CARTOUCHES = [
+  [/switch ?2/, "switch s2"], [/switch/, "switch"],
+  [/3ds/, "ds d3"], [/\bn?ds\b|\bdsi\b|nintendo ds/, "ds"],
+  [/advance|\bgba\b/, "gba"], [/game ?boy|\bgbc?\b/, "gb"],
+  [/ps ?5|playstation 5/, "boitier br ps5"], [/ps ?4|playstation 4/, "boitier br ps4"], [/ps ?3|playstation 3/, "boitier br ps3"],
+  [/ps ?2|playstation 2/, "boitier ps2"], [/psp/, "boitier br ps3"], [/vita/, "boitier br ps4"],
+  [/ps ?1|ps ?one|psx|playstation|dreamcast|saturn|mega ?cd/, "cd"],
+  [/wii ?u/, "boitier wiiu"], [/wii/, "boitier wii"], [/gamecube|\bn?gc\b/, "boitier gc"], [/xbox/, "boitier xbox"],
+  [/\bs?nes\b|super nintendo|nintendo 64|\bn64\b|mega ?drive|genesis|master system|atari|neo ?geo|famicom|cartouche/, "retro"],
+  [/\bpc\b|steam|\bmac\b|linux|windows|ordi/, "pc"],
+  [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel"]
+];
+// dessus = petits badges (cœur, « rejouer ») : posés sur la cartouche, pas dans le vide au-dessus d'elle
+const jaquette = (m, classe = "", dessus = "") => vignette(m, classe, false, true, dessus);
+function formeCartouche(m) {
+  if (m.type !== "jeu" || !m.support) return "";
+  const s = simplifier(m.support);
+  return (CARTOUCHES.find(([motif]) => motif.test(s)) || [])[1] || "";
 }
 window.secoursImage = (img, id) => {
   const m = medias.get(id);
@@ -721,13 +747,12 @@ const marque = m => (m.type === "jeu" && m.infini) ? `<span class="rev">∞ infi
 function ligneHTML(m, pale, opts = {}) {
   const saisons = suiviSaisons(m) ? `${bandeauHTML(m)}<span class="bande-txt">${echapper(resumeSaisons(m))}</span>` : "";
   const droite = opts.statut && m.statut !== "fini" ? `<span class="pastille-st-mini" style="--c:var(--st-${m.statut})">${nomStatut(m.statut, m.type)}</span>` : `${m.coeur ? ic("coeur", "coeur") : ""}${etoiles(m.note)}`;
-  return `<button class="it ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m)}
+  return `<button class="it ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${jaquette(m)}
     <span class="it-txt"><span class="it-ti">${echapper(m.titre)}${marque(m)}</span><span class="it-me">${meta(m)}</span>${saisons}</span>
     <span class="it-rt">${rubanHTML(m, opts.page)}${droite}</span></button>`;
 }
 function carteHTML(m, pale) {
-  return `<button class="mc ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${vignette(m, "grand")}
-    ${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${(m.type === "jeu" && m.infini) ? `<span class="mc-rev">∞</span>` : m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}
+  return `<button class="mc ${pale ? "pale" : ""} ${adresse.fiche === m.id ? "sel" : ""}" data-fiche="${m.id}">${jaquette(m, "grand", `${m.coeur ? `<span class="mc-coeur">${ic("coeur")}</span>` : ""}${(m.type === "jeu" && m.infini) ? `<span class="mc-rev">∞</span>` : m.revoir ? `<span class="mc-rev">${echapper(MOTS[m.type].revoir.replace("À ", ""))}</span>` : ""}`)}
     ${suiviSaisons(m) ? bandeauHTML(m) : ""}<span class="mc-ti">${echapper(m.titre)}</span>${etoiles(m.note)}</button>`;
 }
 // « Étape » d'une fiche selon le tri choisi : les listes sont coupées en paquets (★★★★★, 2019, M…)
@@ -829,16 +854,16 @@ function carteSaisonHTML(m, s) {
 // --- Piles de sagas (mode groupé) : toucher la pile la déroule sur place ---
 const MOT_TOMES = { livre: "tomes", film: "films", jeu: "jeux", court: "épisodes" };
 function pileHTML(s, mosa) {
-  const tomes = tomesDe(s), ouverte = ui.sagasOuvertes.has(s.id), couv = couvertureSaga(s, tomes);
+  const tomes = tomesDe(s), ouverte = ui.sagasOuvertes.has(s.id), couv = { ...couvertureSaga(s, tomes), type: s.type, support: tomes.find(formeCartouche)?.support };   // jeux : cartouche du 1er tome qui a un support
   const finis = tomes.filter(t => t.statut === "fini").length;
   const prog = `<span class="prog">${tomes.map(t => `<i class="b-${t.statut}"></i>`).join("")}</span>`;
   if (mosa) {
-    return `<button class="mc pile ${ouverte ? "ouverte" : ""}" data-pile="${s.id}">${vignette(couv, "grand")}<span class="nb">${tomes.length}</span>
+    return `<button class="mc pile ${ouverte ? "ouverte" : ""}" data-pile="${s.id}">${jaquette(couv, "grand")}<span class="nb">${tomes.length}</span>
       <span class="mc-ti">${echapper(s.nom)}</span>${etoiles(s.note)}</button>
       ${ouverte ? `<div class="mosa-sous">${barreSagaHTML(s)}<div class="mosa-sous-g">${tomes.map(t => carteHTML(t, estPale(t))).join("")}</div></div>` : ""}`;
   }
   const lus = finis ? `${finis} ${MOTS[s.type].fini.toLowerCase()}${finis > 1 ? "s" : ""}` : "";
-  return `<div class="pile-bloc ${ouverte ? "ouverte" : ""}"><button class="it pile" data-pile="${s.id}"><span class="pile-vg">${vignette(couv)}<span class="nb">${tomes.length}</span></span>
+  return `<div class="pile-bloc ${ouverte ? "ouverte" : ""}"><button class="it pile" data-pile="${s.id}"><span class="pile-vg">${jaquette(couv)}<span class="nb">${tomes.length}</span></span>
     <span class="it-txt"><span class="it-ti">${echapper(s.nom)}</span><span class="it-me">${[tomes[0]?.createur, `${tomes.length} ${MOT_TOMES[s.type]}`, lus].filter(Boolean).map(echapper).join(" · ")}</span>${prog}</span>
     <span class="it-rt">${etoiles(s.note)}${ic("bas", "s chev")}</span></button>
     ${ouverte ? `<div class="sous">${barreSagaHTML(s)}${tomes.map(t => ligneHTML(t, estPale(t), { statut: true })).join("")}</div>` : ""}</div>`;
@@ -999,7 +1024,7 @@ function rendreTableau() {
   const { sections, tous } = contenuPage(ui.page);
   const pales = new Set(tous.filter(estPale));
   const ligne = m => `<tr data-id="${m.id}" class="${adresse.fiche === m.id ? "sel" : ""} ${pales.has(m) ? "pale" : ""}">
-    <td data-col="vg">${vignette(m, "mini")}</td>
+    <td data-col="vg">${jaquette(m, "mini")}</td>
     <td data-col="titre" class="t-titre">${echapper(m.titre)}</td>
     <td data-col="annee">${m.annee || ""}</td>
     <td data-col="statut"><span class="pil"><i class="dot" style="background:var(--st-${m.statut})"></i>${nomStatut(m.statut, m.type)}</span></td>

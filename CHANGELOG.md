@@ -1,5 +1,12 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.2 — 2026-11-14
+- **Jeux en cartouches** : dans les listes (Liste, Compacte, Mosaïque, tableau PC, piles de sagas), chaque jeu prend la forme de son support, avec sa jaquette en guise d'étiquette :
+  - Switch (carte sombre, rouge pour la Switch 2), DS / 3DS, Game Boy, Game Boy Advance, vieilles consoles à cartouche ;
+  - PS1 (boîtier CD), PS2 à PS5, Wii, Wii U, GameCube, Xbox (boîtier avec le nom du support sur le bandeau) ;
+  - PC (grande boîte), Téléphone (icône d'appli).
+- Le support est reconnu d'après son nom (les supports ajoutés dans Réglages marchent aussi : « Xbox 360 », « Steam Deck »…). Sans support, ou avec « Autres » : jaquette normale, comme avant.
+
 ## v0.10.1 — 2026-11-11
 - **Sagas** (livres, films, jeux, anthologies) :
   - les tomes d'une même série sont repérés tout seuls (Wikidata « fait partie de la série », puis titres numérotés comme « Toy Story 2 ») ;
