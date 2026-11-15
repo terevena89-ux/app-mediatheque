@@ -437,7 +437,9 @@ const CARTOUCHES = [
 ];
 // Mode d'affichage des jeux, gardé sur cet appareil : cart (cartouches et disques), boite, affiche
 const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boite" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
-const modeJeux = () => MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
+// (Réglages › Jeux › « Formes » sur Non : tout revient aux affiches simples, et le bouton disparaît)
+const formesJeux = () => reglages.formesJeux !== "non";
+const modeJeux = () => !formesJeux() ? "affiche" : MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
 const jaquette = (m, classe = "", dessus = "") => vignette(m, classe, false, true, dessus);
 function formeCartouche(m, mode = modeJeux()) {
   if (m.type !== "jeu" || !m.support || mode === "affiche") return "";
@@ -454,7 +456,7 @@ window.secoursImage = (img, id) => {
 let penchee = null;
 function redresser() { if (penchee) { penchee.classList.remove("penche"); penchee.removeAttribute("style"); penchee = null; } }
 document.addEventListener("pointermove", e => {
-  if (e.pointerType !== "mouse") return;
+  if (e.pointerType !== "mouse" || reglages.relief === "non") return;
   const o = e.target.closest?.(".mc")?.querySelector(".vg.ct > .ct-o") || null;
   if (o !== penchee) redresser();
   if (!o) return;
@@ -1011,7 +1013,7 @@ function rendreOutils() {
     <button class="btn outil" data-action="menu-tri">${ic("tri", "s")}${tri.nom}${ic("bas", "s fl")}</button>
     <span class="sp"></span>
     ${TYPES_SAGA.includes(ui.type) || ui.type === "serie" ? `<button class="pile-btn ${groupe(ui.type) ? "on" : ""}" data-action="pile" title="${groupe(ui.type) ? (ui.type === "serie" ? "Séries groupées (toucher : saisons séparées)" : "Sagas groupées (toucher : tomes séparés)") : "Séparé (toucher : grouper)"}" aria-label="Grouper ou séparer">${ic("pile", "s")}</button>` : ""}
-    ${ui.type === "jeu" ? (x => `<button class="pile-btn on" data-action="mode-jeux" title="${x.nom} (toucher pour changer)" aria-label="Forme des jeux : ${x.nom}">${ic(x.icone, "s")}</button>`)(MODES_JEUX.find(x => x.id === modeJeux())) : ""}
+    ${ui.type === "jeu" && formesJeux() ? (x => `<button class="pile-btn on" data-action="mode-jeux" title="${x.nom} (toucher pour changer)" aria-label="Forme des jeux : ${x.nom}">${ic(x.icone, "s")}</button>`)(MODES_JEUX.find(x => x.id === modeJeux())) : ""}
     <div class="vues"><i class="vind"></i>${vues.map(v => `<button data-vue="${v.id}" class="${v.id === vue ? "on" : ""}" title="${v.nom}" aria-label="${v.nom}">${ic(v.icone, "s")}${estPC() && v.id === vue ? `<span>${v.nom}</span>` : ""}</button>`).join("")}</div>`;
   poserPastilleVues();
 }
@@ -1709,6 +1711,11 @@ function ouvrirReglages() {
       : `<div class="reg"><span>Vibrations</span>${seg("vibrations", [["oui", "Oui"], ["non", "Non"]], reglages.vibrations)}</div>`}
       <div class="reg"><span>Animations</span>${seg("animations", [["completes", "Complètes"], ["simples", "Simples"]], reglages.animations)}</div>
       <div class="reg"><span>Frise</span>${seg("frise", FRISES.map(f => [f.id, f.nom]), reglages.frise)}</div>
+    </div>
+    <div class="sect">Jeux</div>
+    <div class="groupe">
+      <div class="reg"><span>Formes<small class="petit-gris">cartouches, disques, boîtes</small></span>${seg("formesJeux", [["oui", "Oui"], ["non", "Non"]], formesJeux() ? "oui" : "non")}</div>
+      <div class="reg"><span>Relief<small class="petit-gris">en mosaïque</small></span>${seg("relief", [["penche", "Penché"], ["survol", "Au survol"], ["non", "Non"]], reglages.relief || "penche")}</div>
     </div>
     <div class="sect">Listes</div>
     <div class="groupe">
@@ -3242,6 +3249,8 @@ document.addEventListener("click", e => {
     if (nom === "police") document.documentElement.dataset.police = d.valeur;
     if (nom === "onglets") { document.documentElement.dataset.onglets = d.valeur; requestAnimationFrame(poserPlaquetteOnglets); }
     if (nom === "animations") document.documentElement.dataset.anim = d.valeur;
+    if (nom === "relief") { document.documentElement.dataset.relief = d.valeur; redresser(); }
+    if (nom === "formesJeux") { rendreOutils(); rendreContenu(); }
     if (nom === "frise" && adresse.frise) { rendreEntete(); rendreContenu(); }
     return;
   }

@@ -25,6 +25,7 @@
       if (r.largPanneau) racine.style.setProperty("--larg-panneau", r.largPanneau + "px");
       racine.dataset.onglets = "t2";   // (un seul style d'onglets depuis la v0.9.2)
       racine.dataset.anim = r.animations || "completes";
+      racine.dataset.relief = r.relief || "penche";
       var sombreTel = matchMedia("(prefers-color-scheme: dark)");
       var choix = r.theme || "auto";
       function appliquer() {

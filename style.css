@@ -948,7 +948,7 @@ body.pc .mosa .vg.ct { border-radius: 0; }
 .pile-vg .vg.ct { box-shadow: none; filter: drop-shadow(2px -2px 0 color-mix(in srgb, var(--muted) 55%, var(--bg))) drop-shadow(2px -2px 0 color-mix(in srgb, var(--muted) 35%, var(--bg))); }
 
 /* Switch : petite carte sombre (rouge pour la Switch 2), encoche en haut */
-.ct-switch { --ar: 21 / 31; --cc: #2A2C31; --et: 13% 7% 5% 7%; --rad: 8% / 5.5%; }
+.ct-switch { --w: 72%; --ar: 21 / 31; --cc: #2A2C31; --et: 13% 7% 5% 7%; --rad: 8% / 5.5%; }
 .ct-switch > .ct-c::before { top: 4.5%; left: 36%; width: 28%; height: 3%; border-radius: 2cqw; background: rgba(0, 0, 0, .4); }
 .ct-s2 { --cc: #C4212C; }
 /* DS / 3DS : carte presque carrée, coin coupé, stries en bas */
@@ -1029,3 +1029,7 @@ body.pc .mosa .vg.ct { border-radius: 0; }
 /* Barre d'outils des jeux (un bouton de plus) : sur un petit écran, c'est le bouton de tri qui rétrécit */
 .outils .vues, .outils .pile-btn { flex-shrink: 0; }
 .outils .btn.outil[data-action="menu-tri"] { min-width: 44px; flex-shrink: 1; overflow: hidden; white-space: nowrap; justify-content: flex-start; }
+/* Réglages › Jeux › Relief : « Au survol » = à plat tant qu'on ne survole / n'appuie pas ; « Non » = tout à plat */
+[data-relief="survol"] .mc .ct-o:not(.penche), [data-relief="non"] .mc .ct-o { transform: none; }
+[data-relief="non"] .mc .ct-o { transition: none; filter: drop-shadow(1px 1.5px 0 var(--ep)) drop-shadow(0 1px 2px rgba(var(--oc), .3)); }
+@media (hover: none) { [data-relief="survol"] .mc:active .ct-o { transform: perspective(520px) rotateY(-16deg) rotateX(8deg); } }

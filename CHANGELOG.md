@@ -6,6 +6,8 @@
   - **Boîtes** : le boîtier ou la boîte en carton du support (boîtier Switch, DS noir, 3DS blanc, carton Game Boy / Super Nintendo, grande boîte PC…) ;
   - **Affiches** : la jaquette toute simple, comme avant.
 - **Une image par façon** : fiche d'un jeu › toucher l'affiche › onglets « Affiche », « Cartouche / disque », « Boîte ». Chaque onglet a sa propre image (recherche, Google Images, Coller, Fichier, « enlever ») ; sans image, c'est l'affiche qui sert.
+- **Réglages › Jeux** : « Formes » Oui / Non (sur Non, tout redevient de simples affiches et le bouton disparaît) et « Relief » Penché / Au survol / Non.
+- Cartouche Switch plus petite.
 - **Plus de relief** en mosaïque : cartouches légèrement tournées (vraie perspective), tranche plus épaisse, ombre portée. À la souris, la cartouche survolée se soulève et penche en suivant le pointeur, avec un reflet qui bouge ; au doigt, elle bascule quand on appuie.
 
 ## v0.10.2 — 2026-11-14
