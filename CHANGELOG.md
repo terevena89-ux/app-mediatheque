@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.6 — 2026-11-17
+- « Chargement… » au démarrage au lieu d'un écran vide ; si la base ne répond pas : un message clair (serveur lent, hors ligne au tout premier lancement, ou lecture refusée).
+- Indicateur de synchro plus honnête : « Synchronisé » seulement après une vraie réponse du serveur (sinon « Connexion au serveur… »).
+- Se déconnecter prévient s'il reste des modifications pas encore envoyées.
+- Message d'échec d'enregistrement plus clair.
+- Hors ligne plus solide : Firebase et ExcelJS gardés dans une copie à part qui n'est plus effacée à chaque mise à jour ; une page d'erreur (ou d'un wifi public) ne remplace plus la bonne copie de l'appli.
+- Session perdue (déconnecté depuis un autre onglet) : l'appli se recharge proprement.
+
 ## v0.10.5 — 2026-11-17
 - Choisir « Ajouter un support… » puis annuler ne vide plus le support de la fiche.
 - Ajouter : un remake (ex. « Le Roi lion » 2019) n'est plus confondu avec l'original (1994) qu'on a déjà.

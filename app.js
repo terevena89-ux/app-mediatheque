@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.5";
+const VERSION = "v0.10.6";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -483,7 +483,8 @@ const refDonnees = () => doc(db, "users", uid, NOM_APPLI, "donnees");
 const refMedia = id => doc(db, "users", uid, NOM_APPLI, "donnees", "medias", id);
 const pret = () => chargeMedias && chargeDonnees;
 
-function erreurEcriture(err) { console.error(err); afficherToast("Échec de l'enregistrement", null, "", true); }
+// (hors ligne, Firestore garde l'envoi pour plus tard : une erreur ici = refus du serveur, droits ou quota)
+function erreurEcriture(err) { console.error(err); afficherToast("Pas enregistré (refusé par le serveur) : recharge l'appli et réessaie", null, "", true); }
 const pourEnvoi = m => { const { id, ...reste } = m; return { ...reste, maj: serverTimestamp() }; };
 
 function ecrireMedias(liste) {
@@ -546,10 +547,19 @@ function demarrerFirebase() {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
   });
   onAuthStateChanged(auth, user => {
-    if (!user) { $("ecran-connexion").hidden = false; $("appli").hidden = true; return; }
+    if (!user) {
+      // Session perdue sans rechargement (déconnecté ailleurs…) : on repart propre, sans écouteurs ni données en mémoire (audit B9)
+      if (uid) { location.reload(); return; }
+      $("ecran-connexion").hidden = false; $("appli").hidden = true; return;
+    }
     uid = user.uid;
     infoCompte = `Connecté : ${user.displayName || user.email}`;
     $("ecran-connexion").hidden = true; $("appli").hidden = false;
+
+    // Base qui ne répond pas : un message plutôt qu'un écran vide (audit B3)
+    const messageContenu = t => { if (!pret()) $("contenu").innerHTML = `<div class="vide-page">${t}</div>`; };
+    const erreurLecture = err => { console.error(err); erreurSynchro = true; majSynchro(); messageContenu(`Impossible de lire tes fiches (${echapper(err.code || err.message)}).`); };
+    setTimeout(() => messageContenu(navigator.onLine ? "Chargement… (le serveur met du temps à répondre)" : "Hors ligne : la première synchro se fera au retour du réseau."), 8000);
 
     onSnapshot(refDonnees(), { includeMetadataChanges: true }, snap => {
       metaDonnees = snap.metadata; majSynchro();
@@ -567,7 +577,7 @@ function demarrerFirebase() {
       chargeDonnees = true;
       rafraichir();
       if (!snap.metadata.fromCache && pret()) setTimeout(rassemblementInitial, 2500);
-    });
+    }, erreurLecture);
     onSnapshot(collection(db, "users", uid, NOM_APPLI, "donnees", "medias"), { includeMetadataChanges: true }, snap => {
       metaMedias = snap.metadata; majSynchro();
       if (snap.empty && snap.metadata.fromCache && !chargeMedias) return;
@@ -575,7 +585,7 @@ function demarrerFirebase() {
       chargeMedias = true;
       rafraichir();
       if (metaDonnees && !metaDonnees.fromCache && pret()) setTimeout(rassemblementInitial, 2500);
-    });
+    }, erreurLecture);
   });
 }
 async function seConnecter() {
@@ -591,11 +601,14 @@ async function seConnecter() {
   }
 }
 // Indicateur de synchro (dans Réglages) : synchronisé / en attente / hors ligne
-let metaDonnees = null, metaMedias = null;
+let metaDonnees = null, metaMedias = null, erreurSynchro = false;
 function etatSynchro() {
   if (MODE_DEMO) return { c: "off", i: "nuage-off", t: "Mode démo : pas de synchro" };
+  if (erreurSynchro) return { c: "off", i: "nuage-off", t: "Erreur de lecture : recharge l'appli" };
   if (!navigator.onLine) return { c: "off", i: "nuage-off", t: "Hors ligne" };
   if (metaDonnees?.hasPendingWrites || metaMedias?.hasPendingWrites) return { c: "attente", i: "nuage-att", t: "En attente d'envoi" };
+  // « Synchronisé » seulement quand les deux écouteurs ont eu une réponse du serveur (pas juste la copie locale)
+  if (!metaDonnees || !metaMedias || metaDonnees.fromCache || metaMedias.fromCache) return { c: "attente", i: "nuage-att", t: "Connexion au serveur…" };
   return { c: "ok", i: "nuage-ok", t: "Synchronisé" };
 }
 function majSynchro() {
@@ -3093,7 +3106,10 @@ document.addEventListener("click", e => {
     case "enregistrer-modif": enregistrerModif(); return;
     // --- Réglages ---
     case "deconnexion":
-      if (confirm("Se déconnecter ? Tes fiches restent en sécurité dans ton compte.")) signOut(auth).then(() => location.reload());
+      if (confirm(metaDonnees?.hasPendingWrites || metaMedias?.hasPendingWrites
+        ? "Attention : des modifications ne sont pas encore envoyées (hors ligne ?). En te déconnectant maintenant, elles risquent de ne pas partir. Se déconnecter quand même ?"
+        : "Se déconnecter ? Tes fiches restent en sécurité dans ton compte."))
+        signOut(auth).then(() => location.reload()).catch(err => afficherToast("Déconnexion impossible : " + err.message, null, "", true));
       return;
     case "largeurs":
       changerReglage("largCote", null); changerReglage("largPanneau", null); changerReglage("colonnes", {});
