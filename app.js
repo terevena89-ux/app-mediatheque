@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.3";
+const VERSION = "v0.10.4";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -482,7 +482,7 @@ const refDonnees = () => doc(db, "users", uid, NOM_APPLI, "donnees");
 const refMedia = id => doc(db, "users", uid, NOM_APPLI, "donnees", "medias", id);
 const pret = () => chargeMedias && chargeDonnees;
 
-function erreurEcriture(err) { console.error(err); afficherToast("Échec de l'enregistrement"); }
+function erreurEcriture(err) { console.error(err); afficherToast("Échec de l'enregistrement", null, "", true); }
 const pourEnvoi = m => { const { id, ...reste } = m; return { ...reste, maj: serverTimestamp() }; };
 
 function ecrireMedias(liste) {
@@ -495,6 +495,17 @@ function ecrireMedias(liste) {
   }
 }
 const ecrireMedia = m => ecrireMedias([m]);
+// Import / annulation d'import : lots attendus un par un (50 fiches, miniatures comprises < 10 Mo).
+// Une erreur lève une exception AVANT toute suppression : on ne perd jamais de fiche (audit B1).
+async function ecrireMediasAttendu(liste, taille = 50) {
+  liste.forEach(m => medias.set(m.id, m));
+  if (MODE_DEMO) { sauverDemo(); return; }
+  for (let i = 0; i < liste.length; i += taille) {
+    const lot = writeBatch(db);
+    liste.slice(i, i + taille).forEach(m => lot.set(refMedia(m.id), pourEnvoi(m)));
+    await lot.commit();
+  }
+}
 function effacerMedias(ids) {
   ids.forEach(id => medias.delete(id));
   if (MODE_DEMO) { sauverDemo(); return; }
@@ -2813,9 +2824,11 @@ document.addEventListener("pointerup", () => {
 
 // ---------- 9. Clics, saisie, clavier ----------
 
-// Message en bas de l'écran pendant 5 secondes, avec un bouton optionnel (« Annuler »…)
+// Message en bas de l'écran, avec un bouton optionnel (« Annuler »…) : 10 s avec bouton, 4 s sans.
+// Un message simple ne remplace pas un message qui a un bouton (sinon « Annuler » disparaît), sauf erreur (prioritaire).
 let minuteurToast = null, actionToast = null;
-function afficherToast(texte, action = null, libelle = "Annuler") {
+function afficherToast(texte, action = null, libelle = "Annuler", prioritaire = false) {
+  if (actionToast && !action && !prioritaire && !$("toast").hidden) return;
   $("toast-texte").textContent = texte;
   $("toast-annuler").textContent = libelle;
   $("toast-annuler").hidden = !action;
@@ -2823,7 +2836,7 @@ function afficherToast(texte, action = null, libelle = "Annuler") {
   $("toast").hidden = false;
   animer($("toast"), [{ opacity: 0, transform: "translate(-50%, 10px)" }, { opacity: 1, transform: "translate(-50%, 0)" }], { duration: 220, easing: DOUX });
   clearTimeout(minuteurToast);
-  minuteurToast = setTimeout(() => { $("toast").hidden = true; actionToast = null; }, 5000);
+  minuteurToast = setTimeout(() => { $("toast").hidden = true; actionToast = null; }, action ? 10000 : 4000);
 }
 $("toast-annuler").addEventListener("click", () => { const a = actionToast; $("toast").hidden = true; actionToast = null; if (a) a(); });
 
@@ -3541,6 +3554,8 @@ async function importerExcel(champ) {
   const fichier = champ.files[0];
   champ.value = "";
   if (!fichier) return;
+  // Hors ligne, les envois attendus ne finiraient jamais : on refuse plutôt que de laisser l'import à moitié
+  if (!MODE_DEMO && !navigator.onLine) { afficherToast("Import possible seulement en ligne", null, "", true); return; }
   if (!confirm("Remplacer toutes tes fiches par le contenu de ce fichier ?")) return;
   try {
     const classeur = await lireClasseur(fichier);
@@ -3602,7 +3617,7 @@ async function importerExcel(champ) {
         revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], notePlusTard: simplifier(l["Note plus tard"]) === "oui", coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, imgs: a?.imgs, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
+        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, mq: a?.mq, imgs: a?.imgs, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
         saisons: listeSaisons ? { actif: true, liste: listeSaisons }
           : saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
         saga: colSaga ? sagaDe(type, l["Saga"]) : (a?.saga || ""), tome: colSaga ? l["Tome"] : a?.tome, wd: a?.wd, sagaCherchee: !!l["Saga"] || a?.sagaCherchee, sagaManuel: a?.sagaManuel,
@@ -3611,8 +3626,16 @@ async function importerExcel(champ) {
     });
     const avant = [...medias.values()], avantSupports = [...donnees.supports], avantRejetes = [...donnees.rejetes], avantSagas = [...donnees.sagas];
     const garder = new Set(nouvelles.map(m => m.id));
+    // Écrire d'abord, supprimer ensuite : si l'envoi échoue en route, les anciennes fiches sont toujours là
+    afficherToast("Import en cours…", null, "", true);
+    try { await ecrireMediasAttendu(nouvelles); }
+    catch (err) {
+      console.error(err);
+      rafraichir();
+      afficherToast("Import interrompu, rien n'a été supprimé : réessaie", null, "", true);
+      return;
+    }
     effacerMedias(avant.filter(m => !garder.has(m.id)).map(m => m.id));
-    ecrireMedias(nouvelles);
     if (supports.length) donnees.supports = supports;
     if (rejetes) donnees.rejetes = rejetes;
     // Sagas du fichier (celles qui ont encore au moins une fiche)
@@ -3620,10 +3643,11 @@ async function importerExcel(champ) {
     if (feuilleSagas || sagasImport.length) donnees.sagasRassemblees = true;
     sauverDonnees();
     retour();
-    afficherToast(`Import terminé : ${nouvelles.length} fiches`, () => {
+    afficherToast(`Import terminé : ${nouvelles.length} fiches`, async () => {
       const remises = new Set(avant.map(m => m.id));
+      try { await ecrireMediasAttendu(avant); }
+      catch (err) { console.error(err); rafraichir(); afficherToast("Annulation interrompue : réessaie l'import de ta sauvegarde", null, "", true); return; }
       effacerMedias([...medias.keys()].filter(id => !remises.has(id)));
-      ecrireMedias(avant);
       donnees.supports = avantSupports; donnees.rejetes = avantRejetes; donnees.sagas = avantSagas; sauverDonnees();
       rafraichir();
     });

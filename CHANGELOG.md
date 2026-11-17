@@ -1,5 +1,10 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.4 — 2026-11-17
+- **Import Excel sûr** : les fiches du fichier sont d'abord toutes envoyées, par petits paquets, et les anciennes ne sont supprimées qu'ensuite. Si l'envoi échoue en route, rien n'est supprimé (message « Import interrompu »). Import refusé hors ligne.
+- L'import garde la qualité des miniatures (plus de retéléchargement de toutes les affiches après un import).
+- **« Annuler » reste 10 secondes** (au lieu de 5) et n'est plus chassé par un autre message.
+
 ## v0.10.3 — 2026-11-14
 - **Jeux : trois façons de les montrer**, avec un nouveau bouton dans la barre d'outils (à gauche des vues) qui passe de l'une à l'autre :
   - **Cartouches et disques** : la cartouche (Switch, DS, Game Boy…) ou le disque (PlayStation, Wii, Xbox, PC…) ;
