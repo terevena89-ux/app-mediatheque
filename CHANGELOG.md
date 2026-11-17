@@ -1,5 +1,11 @@
 # Médiathèque — journal des nouveautés
 
+## v0.11.0 — 2026-11-18
+- **Ouvrir la fiche depuis Ajouter et Voir aussi** : toucher un titre déjà dans ta liste ouvre sa fiche pour la compléter. En la refermant, tu retrouves ta recherche (Ajouter) ou la liste Voir aussi, telles que tu les avais laissées.
+- **Réglages › Apparence › Voir aussi** Oui / Non : sur Non, plus de bouton Voir aussi (fiche et Découvrir) et plus aucune recherche de suggestions en arrière-plan. Réglage gardé sur chaque appareil.
+- **Fenêtres maison** à la place des fenêtres grises du navigateur : nom et numéro de saga, nouveau support, image d'une saison (avec bouton Coller), confirmation de déconnexion et d'import. Sur téléphone, panneau en bas ; sur PC, petite carte centrée. Le bouton retour du téléphone l'annule.
+- Annuler la saisie du nom ou du numéro de saga ne modifie plus la fiche.
+
 ## v0.10.7 — 2026-11-17
 - Téléphone : boutons plus faciles à toucher (icônes du haut, Tags, tri, vues, piles, choix et pastilles de couleur des Réglages), sans rien faire déborder à 384 px.
 - Le libellé du tri se termine par « … » quand la place manque (petits écrans) au lieu d'être coupé net.

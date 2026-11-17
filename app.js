@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.7";
+const VERSION = "v0.11.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -440,6 +440,7 @@ const CARTOUCHES = [
 const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boitier" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
 // (Réglages › Jeux › « Formes » sur Non : tout revient aux affiches simples, et le bouton disparaît)
 const formesJeux = () => reglages.formesJeux !== "non";
+const voirAussiActif = () => reglages.voirAussi !== "non";   // Réglages › Voir aussi (par appareil)
 const modeJeux = () => !formesJeux() ? "affiche" : MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
 const jaquette = (m, classe = "", dessus = "") => vignette(m, classe, false, true, dessus);
 function formeCartouche(m, mode = modeJeux()) {
@@ -530,7 +531,7 @@ function demarrerDemo() {
     const d = JSON.parse(localStorage.getItem("mediatheque-demo")) || {};
     donnees = normaliserDonnees(d.donnees || {});
     medias = new Map((d.medias || []).map(m => [m.id, normaliser(m.id, m)]));
-  } catch (e) { /* on part de zéro */ }
+  } catch (e) { console.error(e); /* on part de zéro */ }
   infoCompte = "Mode démo : données gardées sur cet appareil seulement.";
   chargeMedias = chargeDonnees = true;
   $("appli").hidden = false;
@@ -664,6 +665,7 @@ let ui = {
   sagasOuvertes: new Set(), seriesOuvertes: new Set()   // piles déroulées (sagas) et séries déroulées (saisons)
 };
 let adresse = lireAdresse();
+let vaRetour = null;   // { id de la fiche de départ, onglet de Voir aussi }
 let ficheAffichee = null;   // id de la fiche ouverte (pour ne l'animer qu'à l'ouverture)
 
 function router() {
@@ -671,11 +673,16 @@ function router() {
   const avant = adresse;
   adresse = lireAdresse();
   if (avant.fiche !== adresse.fiche) { ui.ajoutPassage = false; ui.per = null; ui.perSaison = null; ui.vaOnglet = "proches"; ui.vaOuvert = false; }
+  // Retour sur la fiche d'où on avait ouvert un titre de « Voir aussi » : la liste est rouverte
+  if (vaRetour && adresse.fiche === vaRetour.id) { ui.vaOuvert = true; ui.vaOnglet = vaRetour.onglet; vaRetour = null; }
+  if (!adresse.fiche) vaRetour = null;
+  if (!adresse.fiche && adresse.fenetre !== "ajout") ajRetour = null;
   // Fenêtre « Choisir l'affiche » (2e couche, au-dessus de la fiche)
   const m = adresse.fiche && medias.get(adresse.fiche);
   if (adresse.affiche && m && affChoix?.id !== m.id) ouvrirAffiche(m);
   if (!adresse.affiche) { $("voile2").hidden = true; $("voile2").innerHTML = ""; affChoix = null; }
   fermerMenu(true);
+  fermerDemande(null);   // bouton retour du téléphone : annule la petite fenêtre ouverte
   rendreTout();
   if (rechargerApres && !adresse.fenetre && !adresse.fiche) location.reload();
 }
@@ -1201,8 +1208,8 @@ function ficheHTML(m) {
         <input data-champ="tag" list="liste-tags" placeholder="+ tag" aria-label="Ajouter un tag"><datalist id="liste-tags">${tousTags.map(t => `<option value="${echapper(t)}">`).join("")}</datalist></span></div>
       <textarea class="avis" data-champ="avis" rows="2" placeholder="Mon avis…" aria-label="Mon avis">${echapper(m.avis)}</textarea>
       <!-- « Voir aussi » : un bouton sous la fiche, qui la déplie (comme « lire la suite ») -->
-      <button class="va-btn ${ui.vaOuvert ? "ouvert" : ""}" data-action="voir-aussi" aria-expanded="${!!ui.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
-      <div class="va" id="va" ${ui.vaOuvert ? "" : "hidden"}>${ui.vaOuvert ? vaHTML(m) : ""}</div>
+      ${voirAussiActif() ? `<button class="va-btn ${ui.vaOuvert ? "ouvert" : ""}" data-action="voir-aussi" aria-expanded="${!!ui.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
+      <div class="va" id="va" ${ui.vaOuvert ? "" : "hidden"}>${ui.vaOuvert ? vaHTML(m) : ""}</div>` : ""}
     </div>`;
 }
 const ICONE_STATUT = { avoir: "savoir", encours: "sencours", fini: "ok", reserve: "boite", abandon: "x" };
@@ -1361,7 +1368,7 @@ function vaHTML(m) {
     ${!v || v.etat === "charge" ? `<div class="aj-info">Recherche de suggestions…</div>`
       : v.etat === "erreur" ? `<div class="aj-info">Suggestions indisponibles (pas de réseau ?)</div>`
       : !liste.length ? `<div class="aj-info">Aucune suggestion trouvée.</div>`
-      : liste.map((r, i) => ligneResultat(r, m.type, `data-va-res="${i}"`, "va-" + i)).join("")}`;
+      : liste.map((r, i) => ligneResultat(r, m.type, `data-va-res="${i}"`, "va-" + i, true)).join("")}`;
 }
 function majVoirAussi() {
   const m = ficheOuverte();
@@ -1494,7 +1501,7 @@ function rendreFiche(opts = {}) {
   }
   const nouvelle = ficheAffichee !== m.id;
   ficheAffichee = m.id;
-  chargerVoirAussi(m);   // « Voir aussi » est cherché tout de suite, en arrière-plan : le bouton ne fait qu'afficher
+  if (voirAussiActif()) chargerVoirAussi(m);   // « Voir aussi » est cherché tout de suite, en arrière-plan : le bouton ne fait qu'afficher
   if (estPC()) {
     if ($("voile").dataset.quoi === "fiche") fermerVoile();
     $("panneau").hidden = $("redim-panneau").hidden = false;
@@ -1527,6 +1534,50 @@ function ouvrirVoile(quoi, forme, html) {
   $("voile").hidden = false;
 }
 function fermerVoile() { $("voile").hidden = true; $("voile").innerHTML = ""; $("voile").dataset.quoi = ""; }
+
+// --- Petite fenêtre maison : remplace prompt() / confirm() du navigateur (audit E2) ---
+// Téléphone : panneau en bas (clavier juste au-dessus) ; PC : petite carte centrée.
+// demander() -> texte saisi ou null (annulé) ; confirmer() -> true / false.
+// Pas d'adresse #… à elle : le bouton retour du téléphone l'annule (voir router).
+let demandeOuverte = null;
+function petiteFenetre({ titre, texte = "", champ = null, ok = "OK", danger = false, coller = false }) {
+  fermerDemande(null);
+  return new Promise(resolve => {
+    const v = document.createElement("div");
+    v.className = "dm-voile " + (estPC() ? "centre" : "bas");
+    v.innerHTML = `<form class="dm" role="dialog" aria-label="${echapper(titre)}">
+      <h3>${echapper(titre)}</h3>${texte ? `<p>${echapper(texte)}</p>` : ""}
+      ${champ ? `<div class="dm-ligne"><input class="dm-champ" type="text" ${champ.nombre ? 'inputmode="decimal"' : ""} placeholder="${echapper(champ.aide || "")}" value="${echapper(champ.valeur ?? "")}" autocomplete="off">
+        ${coller ? `<button type="button" class="btn" data-dm="coller">${ic("lien", "s")}Coller</button>` : ""}</div>` : ""}
+      <div class="dm-btns"><button type="button" class="btn" data-dm="non">Annuler</button><button type="submit" class="btn ${danger ? "rouge" : "pri"}">${echapper(ok)}</button></div></form>`;
+    document.body.appendChild(v);
+    demandeOuverte = { v, resolve, vide: champ ? null : false };
+    const input = v.querySelector(".dm-champ");
+    // (les clics et touches restent dans la fenêtre : rien ne doit toucher la fiche en dessous)
+    v.addEventListener("click", async e => {
+      e.stopPropagation();
+      if (e.target === v || e.target.closest('[data-dm="non"]')) fermerDemande(demandeOuverte?.vide);
+      else if (e.target.closest('[data-dm="coller"]')) {
+        try { input.value = (await navigator.clipboard.readText()).trim(); input.focus(); }
+        catch (err) { afficherToast("Presse-papiers inaccessible : colle à la main", null, "", true); }
+      }
+    });
+    v.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") fermerDemande(demandeOuverte?.vide); });
+    v.querySelector("form").addEventListener("submit", e => { e.preventDefault(); fermerDemande(input ? input.value.trim() : true); });
+    animer(v.firstElementChild, estPC() ? [{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }]
+      : [{ transform: "translateY(100%)" }, { transform: "none" }], { duration: 220, easing: DOUX });
+    setTimeout(() => { if (input) { input.focus(); input.select(); } else v.querySelector("[type=submit]").focus(); }, 60);
+  });
+}
+function fermerDemande(valeur) {
+  if (!demandeOuverte) return;
+  const { v, resolve, vide } = demandeOuverte;
+  demandeOuverte = null;
+  v.remove();
+  resolve(valeur === null || valeur === undefined ? vide : valeur);
+}
+const demander = (titre, valeur = "", opts = {}) => petiteFenetre({ titre, ...opts, champ: { valeur, aide: opts.aide, nombre: opts.nombre } });
+const confirmer = (titre, texte = "", opts = {}) => petiteFenetre({ titre, texte, ...opts });
 
 let fenetreAffichee = "";
 function rendreFenetre(opts = {}) {
@@ -1591,15 +1642,20 @@ function apresAjout() { majAjout(); majVoirAussi(); majVaDec(); rendreContenu();
 
 // --- Ajouter : recherche en ligne + ajout à la main ---
 let aj = null;   // { type, texte, resultats, etat, minuteur, controle }
+// Retour depuis une fiche ouverte dans Ajouter : on retrouve la recherche telle quelle
+let ajRetour = null;
 function ouvrirAjout(prerempli = "") {
-  aj = { type: ui.type, texte: prerempli, resultats: [], etat: "" };
+  const reprise = ajRetour;
+  ajRetour = null;
+  aj = reprise || { type: ui.type, texte: prerempli, resultats: [], etat: "" };
   ouvrirVoile("ajout", estPC() ? "centre" : "plein", `<div class="fenetre ajout" role="dialog" aria-label="Ajouter">
     <div class="fhd"><h2>Ajouter</h2><button class="btn-icone" data-action="fermer" aria-label="Fermer">${ic("x")}</button></div>
     <div class="seg aj-types">${TYPES.map(t => `<button data-aj-type="${t.id}">${ic(t.id, "s")}${t.un}</button>`).join("")}</div>
     <label class="aj-champ">${ic("cherche")}<input id="aj-texte" type="search" placeholder="Titre…" autocomplete="off" aria-label="Titre"></label>
     <div id="aj-res" class="aj-res"></div></div>`);
-  $("aj-texte").value = prerempli;
+  $("aj-texte").value = aj.texte;
   majAjout();
+  if (reprise) return;   // (pas de clavier qui surgit au retour)
   if (prerempli) lancerRecherche();
   setTimeout(() => $("aj-texte")?.focus(), 60);
 }
@@ -1608,14 +1664,16 @@ function majAjout() {
   document.querySelectorAll("[data-aj-type]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ajType === aj.type));
   const t = aj.texte.trim();
   $("aj-res").innerHTML = !t ? `<div class="aj-info">Tape un titre : l'appli cherche l'affiche et les infos.</div>` :
-    `<div class="aj-r manuel" data-ligne="aj-m">${ic("plus")}<span class="aj-t"><b>« ${echapper(t)} »</b><small>sans recherche</small></span>${boutonsStatut(aj.type, t, "data-aj-manuel")}</div>
+    `<div class="aj-r manuel" data-ligne="aj-m"${attrOuvrir(aj.type, t)}>${ic("plus")}<span class="aj-t"><b>« ${echapper(t)} »</b><small>sans recherche</small></span>${boutonsStatut(aj.type, t, "data-aj-manuel")}</div>
     ${aj.etat === "charge" ? `<div class="aj-info">Recherche…</div>` : aj.etat === "erreur" ? `<div class="aj-info">Recherche en ligne indisponible : ajoute à la main.</div>`
       : aj.etat === "fini" && !aj.resultats.length ? `<div class="aj-info">Aucun résultat en ligne.</div>` : ""}
-    ${aj.resultats.map((r, i) => ligneResultat(r, aj.type, `data-aj-res="${i}"`, "aj-" + i)).join("")}`;
+    ${aj.resultats.map((r, i) => ligneResultat(r, aj.type, `data-aj-res="${i}"`, "aj-" + i, true)).join("")}`;
 }
+// Titre déjà dans ma liste : toucher la ligne ouvre sa fiche (Ajouter, Voir aussi de la fiche)
+const attrOuvrir = (type, titre, annee) => { const m = dejaLa(type, titre, annee); return m ? ` data-ouvrir="${echapper(m.id)}"` : ""; };
 // Une ligne de résultat (Ajouter, « Voir aussi ») : affiche, titre, infos, 4 icônes de statut
-function ligneResultat(r, type, attribut, cle) {
-  return `<div class="aj-r" data-ligne="${cle}">
+function ligneResultat(r, type, attribut, cle, ouvrable = false) {
+  return `<div class="aj-r" data-ligne="${cle}"${ouvrable ? attrOuvrir(type, r.titre, r.annee) : ""}>
     <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
     <span class="aj-t" title="${echapper(r.titre)}"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
     ${boutonsStatut(type, r.titre, attribut, r.annee)}</div>`;
@@ -1740,6 +1798,7 @@ function ouvrirReglages() {
       : `<div class="reg"><span>Vibrations</span>${seg("vibrations", [["oui", "Oui"], ["non", "Non"]], reglages.vibrations)}</div>`}
       <div class="reg"><span>Animations</span>${seg("animations", [["completes", "Complètes"], ["simples", "Simples"]], reglages.animations)}</div>
       <div class="reg"><span>Frise</span>${seg("frise", FRISES.map(f => [f.id, f.nom]), reglages.frise)}</div>
+      <div class="reg"><span>Voir aussi<small class="petit-gris">suggestions sous la fiche</small></span>${seg("voirAussi", [["oui", "Oui"], ["non", "Non"]], voirAussiActif() ? "oui" : "non")}</div>
     </div>
     <div class="sect">Jeux</div>
     <div class="groupe">
@@ -2005,18 +2064,26 @@ function menuSagaFiche(el, m) {
     ...(actuelle ? [{ id: "tome", html: `<span>N° dans la saga<small>${m.tome ? `actuellement ${m.tome}` : "pas de numéro"}</small></span>` }, { id: "sortir", html: `${ic("x", "s")}Sortir de la saga`, danger: true }] : []),
     ...sagas.filter(s => s.id !== m.saga).slice(0, 30).map(s => ({ id: s.id, html: `<span>${echapper(s.nom)}<small>${tomesDe(s).length} ${MOT_TOMES[s.type]}</small></span>` }))
   ];
-  ouvrirMenu(el, choix, i => {
+  ouvrirMenu(el, choix, async i => {
     const c = choix[i]?.id;
     if (!c) return;
-    majFiche(m, x => {
+    // Saisie d'abord : annuler la fenêtre ne doit rien enregistrer (audit B13)
+    let tome = null, nom = "";
+    if (c === "tome") {
+      tome = parseFloat(String(await demander("Numéro dans la saga", m.tome || "", { nombre: true, aide: "ex. 2" }) || "").replace(",", "."));
+      if (!(tome > 0)) return;
+    }
+    if (c === "nouvelle") {
+      nom = await demander("Nom de la saga", numeroDansTitre(m.titre)?.base || m.titre);
+      if (!nom) return;
+    }
+    const f = medias.get(m.id);
+    if (!f) return;
+    majFiche(f, x => {
       x.sagaManuel = true;
       if (c === "sortir") { x.saga = ""; x.tome = null; return; }
-      if (c === "tome") { const n = parseFloat(prompt("Numéro dans la saga :", m.tome || "")); if (n > 0) x.tome = n; return; }
-      if (c === "nouvelle") {
-        const nom = (prompt("Nom de la saga :", numeroDansTitre(m.titre)?.base || m.titre) || "").trim();
-        if (!nom) return;
-        x.saga = trouverOuCreerSaga(m.type, nom).id; sauverDonnees(); return;
-      }
+      if (c === "tome") { x.tome = tome; return; }
+      if (c === "nouvelle") { x.saga = trouverOuCreerSaga(f.type, nom).id; return; }
       x.saga = c;
     });
     donnees.sagas = donnees.sagas.filter(s => [...medias.values()].some(x => x.saga === s.id));
@@ -2025,8 +2092,8 @@ function menuSagaFiche(el, m) {
 }
 // Menu ⋯ d'une saga déroulée : renommer, défaire
 function menuSaga(el, s) {
-  ouvrirMenu(el, [{ html: `${ic("crayon", "s")}Renommer` }, { html: `${ic("x", "s")}Défaire la saga<small>les tomes redeviennent des fiches séparées</small>`, danger: true }], i => {
-    if (i === 0) { const nom = (prompt("Nom de la saga :", s.nom) || "").trim(); if (nom) { s.nom = nom; sauverDonnees(); rendreContenu(); } return; }
+  ouvrirMenu(el, [{ html: `${ic("crayon", "s")}Renommer` }, { html: `${ic("x", "s")}Défaire la saga<small>les tomes redeviennent des fiches séparées</small>`, danger: true }], async i => {
+    if (i === 0) { const nom = await demander("Nom de la saga", s.nom); if (nom) { s.nom = nom; sauverDonnees(); rendreContenu(); } return; }
     const tomes = tomesDe(s), numeros = tomes.map(t => t.tome);
     tomes.forEach(t => { t.saga = ""; t.tome = null; t.sagaManuel = true; });
     donnees.sagas = donnees.sagas.filter(x => x.id !== s.id);
@@ -2284,8 +2351,8 @@ function majDecouvrir() {
       <button class="dec-rond petit" data-dec="avoir" style="--c:var(--st-avoir)">${ic("savoir", "s")}<small>À voir</small></button>
       <button class="dec-rond petit" data-dec="reserve" style="--c:var(--st-reserve)">${ic("boite", "s")}<small>Réserve</small></button>
       <button class="dec-rond vu" data-dec="fini" aria-label="Vu">${ic("ok")}<small>Vu</small></button></div>
-    <button class="va-btn ${dec.vaOuvert ? "ouvert" : ""}" data-action="dec-va" aria-expanded="${dec.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
-    <div class="va" id="dec-va" ${dec.vaOuvert ? "" : "hidden"}>${dec.vaOuvert ? decVaHTML() : ""}</div>`;
+    ${voirAussiActif() ? `<button class="va-btn ${dec.vaOuvert ? "ouvert" : ""}" data-action="dec-va" aria-expanded="${dec.vaOuvert}">${ic("etoile", "s")}Voir aussi${ic("bas", "s fl")}</button>
+    <div class="va" id="dec-va" ${dec.vaOuvert ? "" : "hidden"}>${dec.vaOuvert ? decVaHTML() : ""}</div>` : ""}`;
   // Infos et affiche du film affiché + des 5 suivants, chargées à l'avance (pour que ça défile sans attendre)
   infosDec(f);
   dec.file.slice(dec.i + 1, dec.i + 6).forEach(infosDec);
@@ -2569,7 +2636,10 @@ document.addEventListener("pointermove", e => {
 });
 ["pointerup", "pointercancel", "scroll"].forEach(ev => document.addEventListener(ev, () => {
   if (appuiLong) { clearTimeout(appuiLong.t); appuiLong = null; }
-  const b = $("bulle"); if (b) b.hidden = true;
+  const b = $("bulle");
+  // doigt relâché après la bulle du titre complet : ce clic-là n'ouvre pas la fiche
+  if (b && !b.hidden) { bloquerClic = true; setTimeout(() => { bloquerClic = false; }, 250); }
+  if (b) b.hidden = true;
 }, true));
 // (pas de menu « copier / sélectionner » du téléphone sur un appui long)
 document.addEventListener("contextmenu", e => { if (e.target.closest(".aj-r")) e.preventDefault(); });
@@ -2916,7 +2986,7 @@ document.addEventListener("click", e => {
     if (b) { const m = menu; fermerMenu(); m.choisir(+b.dataset.m); return; }
     if (!e.target.closest("#dtitre")) { fermerMenu(); return; }
   }
-  const el = e.target.closest("button, [data-fiche], td[data-col], .points i");
+  const el = e.target.closest("button, [data-fiche], [data-ouvrir], td[data-col], .points i");
   if (!el) {
     if (e.target === $("voile2") && $("voile2").dataset.quoi === "saga") { fermerVoile2(); return; }
     if (e.target === $("voile") || e.target === $("voile2")) retour();   // toucher le fond sombre ferme la fenêtre
@@ -2925,6 +2995,14 @@ document.addEventListener("click", e => {
   const d = el.dataset;
   const m = ficheOuverte();
 
+  // Ajouter / Voir aussi : toucher un titre déjà dans ma liste ouvre sa fiche ; refermer ramène où on était
+  if (d.ouvrir) {
+    if (!medias.has(d.ouvrir) || adresse.fiche === d.ouvrir) return;
+    if (adresse.fenetre === "ajout" && aj) ajRetour = { type: aj.type, texte: aj.texte, resultats: aj.resultats, etat: aj.etat === "charge" ? "" : aj.etat };
+    else if (adresse.fiche) vaRetour = { id: adresse.fiche, onglet: ui.vaOnglet };
+    aller(adresseFiche(d.ouvrir));
+    return;
+  }
   if (el.matches(".points i")) { allerPage(+d.page); return; }
   if (d.aller) { aller(d.aller); return; }
   // Sagas : déplier une pile, noter la saga, choisir son affiche, ses réglages
@@ -3110,10 +3188,10 @@ document.addEventListener("click", e => {
     case "enregistrer-modif": enregistrerModif(); return;
     // --- Réglages ---
     case "deconnexion":
-      if (confirm(metaDonnees?.hasPendingWrites || metaMedias?.hasPendingWrites
-        ? "Attention : des modifications ne sont pas encore envoyées (hors ligne ?). En te déconnectant maintenant, elles risquent de ne pas partir. Se déconnecter quand même ?"
-        : "Se déconnecter ? Tes fiches restent en sécurité dans ton compte."))
-        signOut(auth).then(() => location.reload()).catch(err => afficherToast("Déconnexion impossible : " + err.message, null, "", true));
+      confirmer("Se déconnecter ?", metaDonnees?.hasPendingWrites || metaMedias?.hasPendingWrites
+        ? "Attention : des modifications ne sont pas encore envoyées (hors ligne ?). En te déconnectant maintenant, elles risquent de ne pas partir."
+        : "Tes fiches restent en sécurité dans ton compte.", { ok: "Se déconnecter", danger: true }).then(oui => oui &&
+        signOut(auth).then(() => location.reload()).catch(err => afficherToast("Déconnexion impossible : " + err.message, null, "", true)));
       return;
     case "largeurs":
       changerReglage("largCote", null); changerReglage("largPanneau", null); changerReglage("colonnes", {});
@@ -3244,7 +3322,10 @@ document.addEventListener("click", e => {
       const c = choix[i]?.id;
       if (c === "date") { ui.ajoutPassage = false; ui.perSaison = n; ui.per = etatPeriode(); rendreFiche(); $(`per-s${n}`)?.scrollIntoView({ block: "nearest" }); }
       else if (c === "sans-date") majSaison(m, n, s => { s.passages = []; });
-      else if (c === "image") { const u = lienValide(prompt("Adresse de l'image de la saison :") || ""); if (u) majSaison(m, n, s => { s.image = u; }); }
+      else if (c === "image") demander(`Image de la saison ${n}`, "", { aide: "Adresse de l'image (https://…)", coller: true }).then(texte => {
+        const u = lienValide(texte || ""), f = medias.get(m.id);
+        if (u && f) majSaison(f, n, s => { s.image = u; }); else if (texte) afficherToast("Adresse d'image non valide", null, "", true);
+      });
       else if (c === "image-serie") majSaison(m, n, s => { s.image = ""; });
       else if (c === "suppr") {
         const avant = structuredClone(m.saisons);
@@ -3362,13 +3443,13 @@ document.addEventListener("change", async e => {
   // Tableau : une liste déroulante enregistre dès qu'on change le choix
   if (caseEnCours && t.tagName === "SELECT" && t.parentElement === caseEnCours.td) { validerCase(); return; }
   if (t.dataset.champ === "support" && m) {
-    let v = t.value;
-    if (v === "__autre") {
-      v = (prompt("Nouveau support (ex. Crunchyroll, Game Pass…)") || "").trim();
-      if (!v) { rendreFiche(); return; }   // annulé : on garde le support actuel (audit B4)
+    if (t.value !== "__autre") { majFiche(m, x => { x.support = t.value; }); return; }
+    demander("Nouveau support", "", { aide: "ex. Crunchyroll, Game Pass…" }).then(v => {
+      const f = medias.get(m.id);
+      if (!v || !f) { rendreFiche(); return; }   // annulé : on garde le support actuel (audit B4)
       if (!donnees.supports.includes(v)) { donnees.supports.push(v); sauverDonnees(); }
-    }
-    majFiche(m, x => { x.support = v; });
+      majFiche(f, x => { x.support = v; });
+    });
     return;
   }
   if (t.dataset.champ === "tag" && m) { ajouterTag(m, t.value); return; }
@@ -3580,7 +3661,7 @@ async function importerExcel(champ) {
   if (!fichier) return;
   // Hors ligne, les envois attendus ne finiraient jamais : on refuse plutôt que de laisser l'import à moitié
   if (!MODE_DEMO && !navigator.onLine) { afficherToast("Import possible seulement en ligne", null, "", true); return; }
-  if (!confirm("Remplacer toutes tes fiches par le contenu de ce fichier ?")) return;
+  if (!await confirmer("Remplacer toutes tes fiches ?", "Le contenu du fichier remplace tout ce qu'il y a dans l'appli.", { ok: "Remplacer", danger: true })) return;
   try {
     const classeur = await lireClasseur(fichier);
     const lignes = lireFeuille(classeur.getWorksheet("Médias")).filter(l => l["Titre"]);

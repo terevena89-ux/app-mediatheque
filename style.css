@@ -1045,3 +1045,20 @@ body.tel .pastille-acc { width: 34px; height: 34px; }
 body.tel .vide-ajout { margin-top: 14px; height: 40px; padding: 0 18px; }
 /* Libellé du tri coupé proprement (« Ajout ré… ») quand la place manque */
 .tri-nom { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Petite fenêtre maison (saisie / confirmation, remplace prompt / confirm) ---------- */
+.dm-voile { position: fixed; inset: 0; z-index: 55; background: rgba(10, 12, 18, .45); display: flex; font-family: var(--police); }
+.dm-voile.bas { align-items: flex-end; }
+.dm-voile.centre { align-items: center; justify-content: center; padding: 24px; }
+.dm { width: 100%; background: var(--surface); color: var(--ink); padding: 16px 16px calc(14px + env(safe-area-inset-bottom)); border-radius: 12px 12px 0 0; box-shadow: 0 -10px 30px rgba(0, 0, 0, .18); }
+.dm-voile.centre .dm { max-width: 380px; border-radius: 10px; padding-bottom: 14px; box-shadow: 0 24px 60px rgba(0, 0, 0, .3); }
+.dm h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.dm p { margin: 0 0 10px; font-size: 14px; color: var(--muted); line-height: 1.4; }
+.dm-ligne { display: flex; gap: 6px; margin: 8px 0 12px; }
+.dm-champ { flex: 1; min-width: 0; height: 40px; padding: 0 11px; border-radius: var(--r); border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
+.dm-champ:focus { outline: 2px solid var(--acc); outline-offset: -1px; }
+.dm-ligne .btn { height: 40px; }
+.dm-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.dm-btns .btn { height: 38px; min-width: 90px; }
+.btn.rouge { background: #C4483B; color: #fff; box-shadow: none; }
+.aj-r[data-ouvrir] { cursor: pointer; }
