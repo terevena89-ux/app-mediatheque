@@ -1062,3 +1062,9 @@ body.tel .vide-ajout { margin-top: 14px; height: 40px; padding: 0 18px; }
 .dm-btns .btn { height: 38px; min-width: 90px; }
 .btn.rouge { background: #C4483B; color: #fff; box-shadow: none; }
 .aj-r[data-ouvrir] { cursor: pointer; }
+/* Ligne Tags de la fiche : libellé aligné sur la 1re ligne, « + tag » en pastille comme « + Ajouter » (audit F3) */
+.bloc:has(> .v.tags) { align-items: flex-start; }
+.bloc:has(> .v.tags) > .k { line-height: 28px; }
+.tags input { flex: 0 1 96px; min-width: 70px; padding: 0 10px; border: 1px dashed var(--line); border-radius: 2px; font-size: 12.5px; }
+.tags input::placeholder { color: var(--acc); font-weight: 500; opacity: 1; }
+.tags input:focus { flex: 1 1 120px; border-style: solid; border-color: var(--acc); }

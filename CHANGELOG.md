@@ -1,5 +1,14 @@
 # Médiathèque — journal des nouveautés
 
+## v0.11.1 — 2026-11-18
+- Fiche : la ligne « Tags » est alignée comme les autres, et « + tag » a l'allure d'une petite pastille.
+- PC : plus de note au clavier (touches 0 à 5), trop facile à toucher par erreur.
+- Tableau PC : changer le statut d'une série suivie par saison n'est plus annulé tout seul.
+- Ajouter : « Annuler » après un changement de statut remet aussi les dates.
+- Affiches : une copie ratée (réseau instable) est retentée aux lancements suivants (3 fois au plus) ; les adresses « http: » passent en « https: » ; les sites des affiches ne reçoivent plus l'adresse de l'appli.
+- La mise à jour automatique n'interrompt plus une saisie en cours (case du tableau, Notes, petite fenêtre…).
+- Coulisses : identifiants de fiche plus sûrs, petits outils communs regroupés (outils.js), code inutile retiré.
+
 ## v0.11.0 — 2026-11-18
 - **Ouvrir la fiche depuis Ajouter et Voir aussi** : toucher un titre déjà dans ta liste ouvre sa fiche pour la compléter. En la refermant, tu retrouves ta recherche (Ajouter) ou la liste Voir aussi, telles que tu les avais laissées.
 - **Réglages › Apparence › Voir aussi** Oui / Non : sur Non, plus de bouton Voir aussi (fiche et Découvrir) et plus aucune recherche de suggestions en arrière-plan. Réglage gardé sur chaque appareil.

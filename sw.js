@@ -4,7 +4,7 @@
 // même sans réseau. (Les données, elles, sont gérées par Firebase.)
 // À CHAQUE NOUVELLE VERSION : changer le numéro ci-dessous.
 // =========================================================
-const CACHE = "mediatheque-v0.11.0";
+const CACHE = "mediatheque-v0.11.1";
 // Bibliothèques à version fixe : cache à part, gardé d'une version à l'autre
 // (sinon elles sont effacées à chaque mise à jour et l'appli ne s'ouvre plus hors ligne juste après — audit B11).
 // Changer ce nom seulement si on change de version de Firebase ou d'ExcelJS.
@@ -13,7 +13,7 @@ const LIBS = "mediatheque-libs-v1";
 // Fichiers de l'appli à garder dès l'installation
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "sources.js", "frise.js",
-  "decouvrir.js", "champs-mobile.js", "notes-idees.js", "excel-style.js", "firebase-config.js",
+  "decouvrir.js", "outils.js", "champs-mobile.js", "notes-idees.js", "excel-style.js", "firebase-config.js",
   "manifest.json", "icones/icone.svg", "icones/icone-192.png"
 ];
 const BIBLIOTHEQUES = [

@@ -23,6 +23,7 @@ import {
   doc, collection, onSnapshot, setDoc, writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { simplifier, echapper, titreNu } from "./outils.js";
 import { chargerExcelJS, ajouterFeuille, telechargerClasseur, lireClasseur, lireFeuille } from "./excel-style.js";
 import { chercherEnLigne, chercherAffiches, voirAussi, copierImage, reduireFichier, dateDeSortie, infosSaga, saisonsTVmaze } from "./sources.js";
 import { dessinerFrise } from "./frise.js";
@@ -30,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.11.0";
+const VERSION = "v0.11.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -90,7 +91,7 @@ const ACCENTS = [
 const SUPPORTS_DEPART = ["PC", "Téléphone", "Switch", "Switch 2", "Wii", "NDS", "Game Boy", "PS1", "PS2", "PS3", "PS4", "PS5", "Autres"];
 // Ancienne liste (v0.1 à v0.3, pour tous les types) : remplacée une fois par la nouvelle
 const ANCIENS_SUPPORTS = ["Cinéma", "Netflix", "Canal+", "Prime Video", "Disney+", "Apple TV+", "HBO Max", "MUBI",
-  "Blu-ray", "PC", "Switch", "PS5", "Steam Deck", "Papier", "Kindle", "Bibliothèque", "Bibliothèque"];
+  "Blu-ray", "PC", "Switch", "PS5", "Steam Deck", "Papier", "Kindle", "Bibliothèque"];
 
 // Réglages de ressenti, gardés sur CET appareil seulement (pas synchronisés)
 const CLE_REGLAGES = "mediatheque-reglages";
@@ -108,10 +109,10 @@ function changerReglage(nom, valeur) {
 
 const $ = id => document.getElementById(id);
 const ic = (nom, classe = "") => `<svg class="ic ${classe}"><use href="#i-${nom}"></use></svg>`;
-const nouvelId = () => Math.random().toString(36).slice(2, 10);
-const simplifier = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
-const echapper = t => String(t ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const lienValide = u => /^https?:\/\/\S+$/i.test(String(u || "").trim()) ? String(u).trim() : "";
+// Identifiant de fiche : 12 caractères tirés au hasard par le navigateur (pas de doublon possible en pratique — audit B16)
+const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 12);
+// Lien d'image : http: passe en https: (sinon bloqué ou signalé sur une page https — audit A6)
+const lienValide = u => { const s = String(u || "").trim(); return /^https?:\/\/\S+$/i.test(s) ? s.replace(/^http:/i, "https:") : ""; };
 const etoiles = n => n ? `<span class="etoiles">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>` : "";
 const deuxChiffres = n => String(n).padStart(2, "0");
 const moisActuel = () => { const d = new Date(); return `${d.getFullYear()}-${deuxChiffres(d.getMonth() + 1)}`; };
@@ -253,6 +254,7 @@ function normaliser(id, d) {
     image: lienValide(d.image),
     miniature: typeof d.miniature === "string" && d.miniature.startsWith("data:image/") ? d.miniature : "",
     mq: +d.mq || 0,   // qualité de la copie : 2 = nouvelle copie plus nette (v0.3.1)
+    mqEssais: +d.mqEssais || 0,   // copies ratées (on arrête après 3 lancements)
     // true = j'ai choisi / modifié / enlevé l'affiche moi-même (sinon : affiche trouvée automatiquement).
     // Rien d'affiché pour l'instant : servira à passer en revue les affiches automatiques.
     afficheChoisie: !!d.afficheChoisie,
@@ -417,7 +419,7 @@ function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   const src = perso || (hd && m.image ? m.image : (m.miniature || m.image));
   // id lu dans data-sid (échappé) et jamais collé dans le code du onerror (audit A4)
   const secours = hd && m.image && m.miniature && m.id ? "secoursImage(this,this.dataset.sid)" : "this.remove()";
-  const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" data-sid="${echapper(m.id)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
+  const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img referrerpolicy="no-referrer" src="${echapper(src)}" data-sid="${echapper(m.id)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
   if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
   return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
 }
@@ -684,7 +686,7 @@ function router() {
   fermerMenu(true);
   fermerDemande(null);   // bouton retour du téléphone : annule la petite fenêtre ouverte
   rendreTout();
-  if (rechargerApres && !adresse.fenetre && !adresse.fiche) location.reload();
+  if (rechargerApres && peutRecharger()) location.reload();
 }
 addEventListener("hashchange", router);
 
@@ -699,17 +701,17 @@ function rafraichir() {
 // on les refait une par une, tranquillement en arrière-plan, quand le réseau est là.
 let ameliorationLancee = false;
 async function ameliorerMiniatures() {
-  const aRefaire = [...medias.values()].filter(m => m.image && m.mq < 2).map(m => m.id);
+  const aRefaire = [...medias.values()].filter(m => m.image && m.mq < 2 && m.mqEssais < 3).map(m => m.id);
   for (const id of aRefaire) {
     if (!navigator.onLine) return;
     const m = medias.get(id);
     if (!m || !m.image || m.mq >= 2) continue;
     const mini = await copierImage(m.image);
     const actuelle = medias.get(id);
+    // Copie ratée (réseau instable) : retentée aux lancements suivants, 3 fois au plus (audit B14)
     if (actuelle && actuelle.image === m.image) {
-      actuelle.mq = 2;                          // (même si le site refuse : on ne réessaie pas sans fin)
-      if (mini) actuelle.miniature = mini;
-      ecrireMedia(actuelle);
+      if (mini) { actuelle.mq = 2; actuelle.miniature = mini; } else actuelle.mqEssais++;
+      if (mini || navigator.onLine) ecrireMedia(actuelle);
     }
     await new Promise(r => setTimeout(r, 400));   // sans surcharger le téléphone ni les sites
   }
@@ -974,7 +976,7 @@ function changerZoom(pas, { depart = null, origine = "50% 0" } = {}) {
 function rendreCote() {
   if (!estPC()) { $("cote").innerHTML = ""; return; }
   if (!$("recherche-pc")) {
-    $("cote").innerHTML = `<div class="logo"><img src="icones/icone.svg" alt="" width="22" height="22">Médiathèque</div>
+    $("cote").innerHTML = `<div class="logo"><img referrerpolicy="no-referrer" src="icones/icone.svg" alt="" width="22" height="22">Médiathèque</div>
       <label class="chercher">${ic("cherche", "s")}<input id="recherche-pc" type="search" placeholder="Chercher" aria-label="Chercher"><kbd>Ctrl K</kbd></label>
       <div id="cote-nav" class="cote-nav"></div>`;
   }
@@ -1106,7 +1108,7 @@ function rendreTableau() {
   const fixe = COLS.reduce((s, [k, , w]) => s + (w ? (reglages.colonnes[k] || w) : 0), 0);
   $("contenu").innerHTML = `<div class="tab-wrap"><table class="tableau" style="min-width:${fixe + 160}px">
     <colgroup>${COLS.map(([k, , w]) => `<col data-col="${k}" ${w ? `style="width:${reglages.colonnes[k] || w}px"` : ""}>`).join("")}</colgroup>
-    <thead><tr>${COLS.map(([k, n, w], i) => `<th>${n}${w && k !== "vg" ? `<i class="redim-col" data-col="${k}" title="Glisser pour élargir"></i>` : ""}${i === 0 ? "" : ""}</th>`).join("")}</tr></thead>
+    <thead><tr>${COLS.map(([k, n, w], i) => `<th>${n}${w && k !== "vg" ? `<i class="redim-col" data-col="${k}" title="Glisser pour élargir"></i>` : ""}</th>`).join("")}</tr></thead>
     <tbody>${tous.map(ligne).join("")}
       <tr class="nouveau"><td>${ic("plus", "s")}</td><td colspan="8"><input id="tab-nouveau" placeholder="Nouveau titre… (Entrée pour ajouter)" autocomplete="off"></td></tr></tbody></table></div>`;
 }
@@ -1178,7 +1180,7 @@ function ficheHTML(m) {
       <div class="saisons-bas"><button class="chip plus" data-action="saison-plus">+ Saison</button><button class="chip" data-action="saisons-tvmaze">${ic("cherche", "s")}Mettre à jour</button></div></div>` : ""}`;
   const passages = m.passages.map((p, k) => `<button class="chip ${estOuvert(p) ? "ouvert" : ""}" data-passage="${k}">${echapper(texteDate(p))}${estOuvert(p) ? " …" : ""}</button>`).join("");
   const formPassage = !ui.ajoutPassage || !ui.per ? "" : periodeHTML(ui.per, "fiche", ui.per.remplace != null ? "OK" : "Ajouter");
-  return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
+  return `<div class="fi-fond" style="background:${degrade(m.titre)}">${src ? `<img referrerpolicy="no-referrer" src="${echapper(src)}" alt="" onerror="this.remove()">` : ""}</div>
     <div class="fi-tete"><button class="fi-aff-btn" data-action="choisir-affiche" aria-label="Changer l'affiche">${vignette(m, "fi-aff", true)}<span class="fi-crayon">${ic("crayon")}</span></button>
       <div class="fi-tt"><h2>${echapper(m.titre)}</h2>
         <div class="fi-me">${[m.annee, m.createur].filter(Boolean).map(echapper).join(" · ")}${sagaPar(m.saga) ? `<br><span class="fi-saga">${ic("pile", "s")}${echapper(sagaPar(m.saga).nom)}${m.tome ? ` · n° ${m.tome}` : ""}</span>` : ""}${m.genres.length ? `<br>${echapper(m.genres.join(", "))}` : ""}</div></div>
@@ -1605,7 +1607,6 @@ function rendreFenetre(opts = {}) {
 // À voir (marque-page), En cours (lecture), Vu (coche), Réserve (boîte).
 // Un titre déjà dans ma médiathèque montre son statut : toucher une autre icône le change.
 const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
-const titreNu = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();   // sans ponctuation
 // Même œuvre ? même titre (sans ponctuation) et, si les deux années sont connues, à un an près
 // (« Le Roi lion » 1994 ≠ « Le Roi lion » 2019)
 const memeOeuvre = (titreA, anA, titreB, anB) => titreNu(titreA) === titreNu(titreB) && (!anA || !anB || Math.abs(anA - anB) <= 1);
@@ -1623,11 +1624,11 @@ function ajouterAvecStatut(infos, type, statut, bouton) {
   const m = dejaLa(type, infos.titre, infos.annee);
   if (m) {
     if (m.statut === statut) return;
-    const avant = m.statut;
+    const avant = structuredClone(m);   // Annuler remet aussi les dates touchées par le statut (audit B13)
     m.statut = statut;
     periodeSelonStatut(m, statut);
     ecrireMedia(m);
-    afficherToast(`« ${m.titre} » : ${nomStatut(statut, type)}`, () => { m.statut = avant; ecrireMedia(m); apresAjout(); });
+    afficherToast(`« ${m.titre} » : ${nomStatut(statut, type)}`, () => { ecrireMedia(structuredClone(avant)); apresAjout(); });
   } else {
     const f = creerFiche(infos, type, statut);
     afficherToast(`« ${f.titre} » ajouté`, () => { effacerMedias([f.id]); apresAjout(); });
@@ -1674,7 +1675,7 @@ const attrOuvrir = (type, titre, annee) => { const m = dejaLa(type, titre, annee
 // Une ligne de résultat (Ajouter, « Voir aussi ») : affiche, titre, infos, 4 icônes de statut
 function ligneResultat(r, type, attribut, cle, ouvrable = false) {
   return `<div class="aj-r" data-ligne="${cle}"${ouvrable ? attrOuvrir(type, r.titre, r.annee) : ""}>
-    <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
+    <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img referrerpolicy="no-referrer" src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
     <span class="aj-t" title="${echapper(r.titre)}"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
     ${boutonsStatut(type, r.titre, attribut, r.annee)}</div>`;
 }
@@ -1742,8 +1743,8 @@ async function chercherAffiche() {
     const res = (await chercherEnLigne($("mo-type").value, $("mo-titre").value)).filter(r => r.image);
     brouillon.affiches = res;
     zone.innerHTML = res.length ? res.map((r, i) => `<button class="mo-choix" data-mo-res="${i}" title="${echapper(r.titre)}">
-      <span class="vg"><img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.closest('button').remove()"></span>
-      <small>${echapper(r.titre)}${r.annee ? ` · ${r.annee}` : ""}</small></button>`).join("")
+      <span class="vg"><img referrerpolicy="no-referrer" src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.closest('button').remove()"></span>
+      <small>${echapper(r.titre)}${r.annee ? ` · ${echapper(r.annee)}` : ""}</small></button>`).join("")
       : `<div class="aj-info">Aucune affiche trouvée : colle l'adresse d'une image ci-dessus.</div>`;
   } catch (e) { zone.innerHTML = `<div class="aj-info">Recherche en ligne indisponible.</div>`; }
 }
@@ -2188,7 +2189,7 @@ function affichesTriHTML(m) {
   const urls = tri.affiches.get(m.id);
   if (urls === undefined || urls === null) return `<span class="aj-info">Recherche d'affiches…</span>`;
   if (!urls.length) return `<span class="aj-info">Aucune affiche trouvée : essaie Google Images.</span>`;
-  return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
+  return urls.map((u, i) => `<button class="tri-a ${u === m.image ? "on" : ""}" data-tri-aff="${i}"><img referrerpolicy="no-referrer" src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
 }
 function majAffichesTri(m) { if ($("tri-affs")) $("tri-affs").innerHTML = affichesTriHTML(m); }
 // Avis enregistré : petite coche « Enregistré » qui apparaît puis s'efface
@@ -2286,7 +2287,7 @@ function affDecHTML(f) {
   const urls = dec.affiches.get(cleFilm(f)), actuelle = dec.infos.get(cleFilm(f))?.image;
   const bande = urls == null ? `<span class="aj-info">Recherche d'affiches…</span>`
     : !urls.length ? `<span class="aj-info">Aucune affiche trouvée : essaie Google Images.</span>`
-    : urls.map((u, i) => `<button class="tri-a ${u === actuelle ? "on" : ""}" data-dec-aff="${i}"><img src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
+    : urls.map((u, i) => `<button class="tri-a ${u === actuelle ? "on" : ""}" data-dec-aff="${i}"><img referrerpolicy="no-referrer" src="${echapper(u)}" alt="" onload="verifierHauteur(this)" onerror="this.closest('button').remove()"></button>`).join("");
   return `<div class="dec-affs"><div class="tri-affs">${bande}</div>
     <div class="trois"><button class="btn" data-action="dec-aff-google">${ic("cherche", "s")}Google Images</button><button class="btn" data-action="dec-aff-coller">${ic("lien", "s")}Coller</button><button class="btn" data-action="dec-aff-fermer">${ic("ok", "s")}OK</button></div>
     <div class="aff-lien" id="dec-lien" hidden><input id="dec-url" type="text" inputmode="url" placeholder="https://… (adresse de l'image)" autocomplete="off" spellcheck="false"><button class="btn pri" data-action="dec-aff-url">OK</button></div></div>`;
@@ -3175,7 +3176,6 @@ document.addEventListener("click", e => {
     case "choisir-affiche": if (m) aller(adresseFiche(m.id) + "&affiche"); return;
     case "aff-fichier": $("aff-fichier").click(); return;
     case "aff-enlever": if (m && affChoix && affChoix.cible !== "affiche") appliquerImageJeu(m, affChoix.cible, {}); return;
-    case "aff-lien": $("aff-lien").hidden = false; $("aff-url").focus(); return;
     case "aff-google": if (m) ouvrirGoogleImages(m); return;
     case "aff-coller": if (m) collerAffiche(m, true, $("aff-lien")); return;
     case "aff-url-ok": {
@@ -3270,16 +3270,6 @@ document.addEventListener("click", e => {
     }
   }
   // Pastilles de catégories de la page « À voir » : on en garde au moins une
-  if (d.cat) {
-    const choix = new Set(catsChoisies(ui.type));
-    if (choix.has(d.cat)) { if (choix.size > 1) choix.delete(d.cat); } else choix.add(d.cat);
-    reglages.categories = { ...(reglages.categories || {}), [ui.type]: [...choix] };
-    changerReglage("categories", reglages.categories);
-    const page = $("piste")?.children[0];
-    if (page) { page.innerHTML = pageHTML(0); cascade(page); }
-    else rendreContenu();
-    return;
-  }
   if (d.affCible && affChoix && m) { affChoix.cible = d.affCible; majGrilleAffiches(m, false); return; }
   if (d.aff !== undefined && affChoix && m) { const a = affChoix.liste[+d.aff]; if (a) appliquerAffiche(m, { image: a.image }); return; }
   if (d.moRes !== undefined && brouillon?.affiches) {
@@ -3523,11 +3513,14 @@ function validerCase(annuler = false) {
     const v = c.value;
     if (col === "titre" && v.trim()) m.titre = v.trim();
     if (col === "annee") m.annee = +v > 0 ? Math.round(+v) : null;
-    if (col === "statut" && STATUTS.includes(v) && v !== m.statut) { m.statut = v; periodeSelonStatut(m, v); }
-    if (col === "note" && +v >= 0 && +v <= 5) m.note = +v;
-    if (col === "support") m.support = v;
-    if (col === "tags") m.tags = [...new Set(v.split(",").map(x => x.trim()).filter(Boolean))];
-    ecrireMedia(m);
+    // Statut : même chemin que la fiche (séries suivies par saison comprises, sinon le statut était recalculé — audit B13)
+    if (col === "statut") { if (STATUTS.includes(v) && v !== m.statut) changerStatut(m, v); }
+    else {
+      if (col === "note" && +v >= 0 && +v <= 5) m.note = +v;
+      if (col === "support") m.support = v;
+      if (col === "tags") m.tags = [...new Set(v.split(",").map(x => x.trim()).filter(Boolean))];
+      ecrireMedia(m);
+    }
   }
   tableauEnEdition = false;
   td.classList.remove("edit");
@@ -3538,7 +3531,7 @@ document.addEventListener("focusout", e => {
   if (caseEnCours && e.target.parentElement === caseEnCours.td) setTimeout(() => { if (caseEnCours && !caseEnCours.td.contains(document.activeElement)) validerCase(); }, 0);
 });
 
-// Clavier : Ctrl+K recherche, Échap ferme, flèches pour passer d'une fiche à l'autre (PC), 0-5 pour noter
+// Clavier : Ctrl+K recherche, Échap ferme, flèches pour passer d'une fiche à l'autre (PC)
 document.addEventListener("keydown", e => {
   const t = e.target;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -3572,7 +3565,7 @@ document.addEventListener("keydown", e => {
     if (adresse.fenetre || adresse.fiche) { retour(); return; }
   }
   if (/INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
-  // PC : flèches haut / bas = fiche précédente / suivante ; 0 à 5 = note
+  // PC : flèches haut / bas = fiche précédente / suivante (plus de note au clavier : trop facile à toucher par erreur)
   if (estPC() && adresse.fiche && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     const liste = contenuPage(ui.page).tous;
     const i = liste.findIndex(x => x.id === adresse.fiche);
@@ -3580,7 +3573,6 @@ document.addEventListener("keydown", e => {
     if (n) { e.preventDefault(); location.replace("#" + adresseFiche(n.id)); setTimeout(() => document.querySelector(`[data-fiche="${n.id}"]`)?.scrollIntoView({ block: "nearest" }), 30); }
     return;
   }
-  if (estPC() && adresse.fiche && /^[0-5]$/.test(e.key)) { const m = ficheOuverte(); if (m) majFiche(m, x => { x.note = +e.key; }); }
 });
 
 $("btn-connexion").addEventListener("click", seConnecter);
@@ -3792,6 +3784,11 @@ function lirePartage() {
 // ---------- 11. Démarrage ----------
 // Service worker : ouvrir l'appli sans réseau, l'installer, et la mettre à jour toute seule
 let rechargerApres = false;
+// Rechargement après mise à jour : jamais pendant une saisie (case du tableau, Notes, petite fenêtre…) — audit B16
+const peutRecharger = () => !adresse.fenetre && !adresse.fiche && !caseEnCours && !demandeOuverte
+  && !document.querySelector(".ni-ecran") && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "");
+// (reprise quand la saisie se termine)
+document.addEventListener("focusout", () => setTimeout(() => { if (rechargerApres && peutRecharger()) location.reload(); }, 400));
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
   navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
@@ -3800,7 +3797,7 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (!avaitUneVersion || rechargerApres) return;
     rechargerApres = true;
-    if (!adresse.fenetre && !adresse.fiche) location.reload();
+    if (peutRecharger()) location.reload();
   });
 }
 majMiseEnPage();

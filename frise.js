@@ -19,7 +19,7 @@
 export const COULEURS_TYPES = { jeu: "#8A6FD0", film: "#3B82F6", serie: "#D9466F", livre: "#22A06B", court: "#D98A2B" };
 const NOMS = { jeu: "Jeux", film: "Films", serie: "Séries", livre: "Livres", court: "Courts" };
 const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
-const echapper = t => String(t ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+import { echapper } from "./outils.js";
 const etoiles = n => n ? `<span class="etoiles">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>` : "";
 
 // Petit texte de date d'un événement : « 12 mars », « mars », « oct. → déc. », « dans l'année »

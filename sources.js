@@ -50,7 +50,7 @@ function trouverGenres(...textes) {
   return res.slice(0, 3);
 }
 const annee = t => { const m = String(t || "").match(/\b(1[89]\d\d|20\d\d)\b/); return m ? +m[1] : null; };
-const simplifier = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+import { simplifier, titreNu as sansPonctuation } from "./outils.js";
 // Une image au format affiche : nettement plus haute que large
 const enHauteur = th => th && th.width && th.height && th.height >= th.width * 1.15;
 
@@ -235,7 +235,6 @@ export async function chercherEnLigne(type, texte, signal) {
 // Séries : les posters de TVmaze ; livres : les couvertures des éditions (Open Library) ;
 // films et jeux : les affiches des Wikipédia anglais et français (en hauteur seulement).
 // Même titre ? (sans tenir compte des accents, majuscules et ponctuation : « Animal Crossing : New Horizons » = « Animal Crossing: New Horizons »)
-const sansPonctuation = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();
 const memeTitre = (a, b) => { const x = sansPonctuation(a), y = sansPonctuation(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
 const sansParentheses = t => t.replace(/\s*\([^)]*\)\s*$/, "");
 const https = u => (u || "").replace(/^http:/, "https:");
