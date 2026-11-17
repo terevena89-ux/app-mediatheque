@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.4";
+const VERSION = "v0.10.5";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -415,8 +415,9 @@ function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   const mode = cartouche ? modeJeux() : "affiche", forme = mode !== "affiche" && formeCartouche(m, mode);
   const perso = forme && (m.imgs?.[mode]?.miniature || m.imgs?.[mode]?.image);   // image choisie pour ce mode
   const src = perso || (hd && m.image ? m.image : (m.miniature || m.image));
-  const secours = hd && m.image && m.miniature && m.id ? `secoursImage(this,'${m.id}')` : "this.remove()";
-  const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
+  // id lu dans data-sid (échappé) et jamais collé dans le code du onerror (audit A4)
+  const secours = hd && m.image && m.miniature && m.id ? "secoursImage(this,this.dataset.sid)" : "this.remove()";
+  const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img src="${echapper(src)}" data-sid="${echapper(m.id)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
   if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
   return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
 }
@@ -436,7 +437,7 @@ const CARTOUCHES = [
   [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel", "tel"]
 ];
 // Mode d'affichage des jeux, gardé sur cet appareil : cart (cartouches et disques), boite, affiche
-const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boite" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
+const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boitier" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
 // (Réglages › Jeux › « Formes » sur Non : tout revient aux affiches simples, et le bouton disparaît)
 const formesJeux = () => reglages.formesJeux !== "non";
 const modeJeux = () => !formesJeux() ? "affiche" : MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
@@ -626,7 +627,9 @@ function retour() {
   location.replace("#" + (adresse.affiche && adresse.fiche ? adresseFiche(adresse.fiche) : ""));
 }
 function lireAdresse() {
-  const parts = decodeURIComponent(location.hash.slice(1)).split("&").filter(Boolean);
+  let brut = "";
+  try { brut = decodeURIComponent(location.hash.slice(1)); } catch (e) { /* adresse abîmée (lien tronqué) : accueil */ }
+  const parts = brut.split("&").filter(Boolean);
   const r = { frise: false, fiche: null, fenetre: null, id: null };
   parts.forEach(p => {
     if (p === "frise") r.frise = true;
@@ -1537,21 +1540,21 @@ function rendreFenetre(opts = {}) {
 // Un titre déjà dans ma médiathèque montre son statut : toucher une autre icône le change.
 const STATUTS_AJOUT = [["avoir", "savoir"], ["encours", "sencours"], ["fini", "ok"], ["reserve", "boite"]];
 const titreNu = t => simplifier(t).replace(/[^a-z0-9]+/g, " ").trim();   // sans ponctuation
-const dejaLa = (type, titre) => [...medias.values()].find(x => x.type === type && !x.aVerifier && titreNu(x.titre) === titreNu(titre));
 // Même œuvre ? même titre (sans ponctuation) et, si les deux années sont connues, à un an près
 // (« Le Roi lion » 1994 ≠ « Le Roi lion » 2019)
 const memeOeuvre = (titreA, anA, titreB, anB) => titreNu(titreA) === titreNu(titreB) && (!anA || !anB || Math.abs(anA - anB) <= 1);
+const dejaLa = (type, titre, annee) => [...medias.values()].find(x => x.type === type && !x.aVerifier && memeOeuvre(x.titre, x.annee, titre, annee));
 const dansListe = (type, titre, annee) => [...medias.values()].some(x => x.type === type && memeOeuvre(x.titre, x.annee, titre, annee));
 const estRejete = (type, titre, annee) => donnees.rejetes.some(r => r.type === type && memeOeuvre(r.titre, r.annee, titre, annee));
 // Les « pas intéressé » sont cachés partout : recherche, Voir aussi, Découvrir
 const sansRejetes = (liste, type) => (liste || []).filter(r => !estRejete(type, r.titre, r.annee));
-function boutonsStatut(type, titre, attribut) {
-  const m = dejaLa(type, titre);
+function boutonsStatut(type, titre, attribut, annee) {
+  const m = dejaLa(type, titre, annee);
   return `<span class="st4 ${m ? "fait" : ""}">${STATUTS_AJOUT.filter(([s]) => statutsDe(type).includes(s)).map(([s, i]) =>
     `<button ${attribut} data-statut="${s}" class="${m?.statut === s ? "on" : ""}" style="--c:var(--st-${s})" title="${nomStatut(s, type)}" aria-label="${nomStatut(s, type)}">${ic(i)}</button>`).join("")}</span>`;
 }
 function ajouterAvecStatut(infos, type, statut, bouton) {
-  const m = dejaLa(type, infos.titre);
+  const m = dejaLa(type, infos.titre, infos.annee);
   if (m) {
     if (m.statut === statut) return;
     const avant = m.statut;
@@ -1600,7 +1603,7 @@ function ligneResultat(r, type, attribut, cle) {
   return `<div class="aj-r" data-ligne="${cle}">
     <span class="vg" style="background:${degrade(r.titre)}"><b>${echapper(initiale(r.titre))}</b>${r.image ? `<img src="${echapper(r.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
     <span class="aj-t" title="${echapper(r.titre)}"><b>${echapper(r.titre)}</b><small>${echapper(r.info || [r.annee, r.createur].filter(Boolean).join(" · "))}</small></span>
-    ${boutonsStatut(type, r.titre, attribut)}</div>`;
+    ${boutonsStatut(type, r.titre, attribut, r.annee)}</div>`;
 }
 function lancerRecherche() {
   clearTimeout(aj.minuteur);
@@ -3342,9 +3345,10 @@ document.addEventListener("change", async e => {
     let v = t.value;
     if (v === "__autre") {
       v = (prompt("Nouveau support (ex. Crunchyroll, Game Pass…)") || "").trim();
-      if (v && !donnees.supports.includes(v)) { donnees.supports.push(v); sauverDonnees(); }
+      if (!v) { rendreFiche(); return; }   // annulé : on garde le support actuel (audit B4)
+      if (!donnees.supports.includes(v)) { donnees.supports.push(v); sauverDonnees(); }
     }
-    majFiche(m, x => { x.support = v === "__autre" ? x.support : v; });
+    majFiche(m, x => { x.support = v; });
     return;
   }
   if (t.dataset.champ === "tag" && m) { ajouterTag(m, t.value); return; }

@@ -1,5 +1,13 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.5 — 2026-11-17
+- Choisir « Ajouter un support… » puis annuler ne vide plus le support de la fiche.
+- Ajouter : un remake (ex. « Le Roi lion » 2019) n'est plus confondu avec l'original (1994) qu'on a déjà.
+- Frise : les **courts** apparaissent enfin dans la frise horizontale (leur propre ligne « Courts », seulement s'il y en a), et ont une couleur dans les autres frises.
+- Un lien abîmé (adresse tronquée après le #) ouvre l'accueil au lieu d'une page blanche.
+- « En réserve » retrouve son icône de carton (elle affichait la boîte de jeu depuis la v0.10.3).
+- Sécurité : l'identifiant d'une fiche n'est plus jamais collé dans du code de la page.
+
 ## v0.10.4 — 2026-11-17
 - **Import Excel sûr** : les fiches du fichier sont d'abord toutes envoyées, par petits paquets, et les anciennes ne sont supprimées qu'ensuite. Si l'envoi échoue en route, rien n'est supprimé (message « Import interrompu »). Import refusé hors ligne.
 - L'import garde la qualité des miniatures (plus de retéléchargement de toutes les affiches après un import).

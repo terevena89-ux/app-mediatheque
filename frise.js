@@ -16,8 +16,8 @@
 //   vignette  : petit bout de HTML de l'affiche (fourni par app.js)
 // =========================================================
 
-export const COULEURS_TYPES = { jeu: "#8A6FD0", film: "#3B82F6", serie: "#D9466F", livre: "#22A06B" };
-const NOMS = { jeu: "Jeux", film: "Films", serie: "Séries", livre: "Livres" };
+export const COULEURS_TYPES = { jeu: "#8A6FD0", film: "#3B82F6", serie: "#D9466F", livre: "#22A06B", court: "#D98A2B" };
+const NOMS = { jeu: "Jeux", film: "Films", serie: "Séries", livre: "Livres", court: "Courts" };
 const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 const echapper = t => String(t ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const etoiles = n => n ? `<span class="etoiles">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>` : "";
@@ -64,7 +64,8 @@ function horizontale(evs, larg) {
     grille += `<i class="fh-g ${janvier ? "an" : ""}" style="left:${(m - debut) * W}px"></i>`;
   }
   // Dans chaque piste, les titres d'un même mois s'empilent les uns sous les autres
-  const types = ["jeu", "film", "serie", "livre"];
+  // Piste « Courts » seulement s'il y en a (pas de ligne vide sinon)
+  const types = ["jeu", "film", "serie", "livre", ...(evs.some(e => e.type === "court") ? ["court"] : [])];
   const H = 62;  // hauteur d'un étage (affiche + étoiles)
   const pistes = types.map(t => {
     const liste = evs.filter(e => e.type === t);
