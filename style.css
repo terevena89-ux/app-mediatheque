@@ -1033,3 +1033,15 @@ body.pc .mosa .vg.ct { border-radius: 0; }
 [data-relief="survol"] .mc .ct-o:not(.penche), [data-relief="non"] .mc .ct-o { transform: none; }
 [data-relief="non"] .mc .ct-o { transition: none; filter: drop-shadow(1px 1.5px 0 var(--ep)) drop-shadow(0 1px 2px rgba(var(--oc), .3)); }
 @media (hover: none) { [data-relief="survol"] .mc:active .ct-o { transform: perspective(520px) rotateY(-16deg) rotateX(8deg); } }
+
+/* ---------- Téléphone : cibles plus grandes au doigt (audit G2 / G4) ---------- */
+body.tel .tel-tete .btn-icone { width: 42px; height: 42px; }
+body.tel .btn.outil { height: 36px; padding: 0 8px; }
+body.tel .vues button { height: 32px; min-width: 36px; }
+body.tel .outils { gap: 4px; padding-inline: 10px; }
+body.tel .pile-btn { width: 38px; height: 36px; }
+body.tel .seg button { height: 34px; }
+body.tel .pastille-acc { width: 34px; height: 34px; }
+body.tel .vide-ajout { margin-top: 14px; height: 40px; padding: 0 18px; }
+/* Libellé du tri coupé proprement (« Ajout ré… ») quand la place manque */
+.tri-nom { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

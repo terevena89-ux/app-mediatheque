@@ -30,7 +30,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.10.6";
+const VERSION = "v0.10.7";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -858,7 +858,9 @@ function pageHTML(i) {
   // (les catégories affichées et « Tout mélangé » se choisissent dans le menu Tags)
   const { sections } = contenuPage(i);
   if (!sections.length) {
-    return `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat" : "Rien ici pour l'instant"}</div>`;
+    // Page vide : un bouton Ajouter pour savoir par où commencer (audit E1)
+    return `<div class="vide-page">${ui.recherche || ui.filtres.size ? "Aucun résultat"
+      : `Rien ici pour l'instant<br><button class="btn pri vide-ajout" data-action="ajouter">${ic("plus", "s")}Ajouter</button>`}</div>`;
   }
   const vue = vueActuelle();
   // Titre de section : seulement s'il y a plusieurs sections (ou pour « Abandonnés »)
@@ -1037,7 +1039,7 @@ function rendreOutils() {
   const vue = vueActuelle();
   retenir(".vues .vind");
   $("outils").innerHTML = `<button class="btn outil ${ui.filtres.size ? "actif" : ""}" data-action="menu-tags">${ic("tag", "s")}Tags${ui.filtres.size ? `<i class="pastille"></i>` : ""}</button>
-    <button class="btn outil" data-action="menu-tri">${ic("tri", "s")}${tri.nom}${ic("bas", "s fl")}</button>
+    <button class="btn outil" data-action="menu-tri">${ic("tri", "s")}<span class="tri-nom">${tri.nom}</span>${ic("bas", "s fl")}</button>
     <span class="sp"></span>
     ${TYPES_SAGA.includes(ui.type) || ui.type === "serie" ? `<button class="pile-btn ${groupe(ui.type) ? "on" : ""}" data-action="pile" title="${groupe(ui.type) ? (ui.type === "serie" ? "Séries groupées (toucher : saisons séparées)" : "Sagas groupées (toucher : tomes séparés)") : "Séparé (toucher : grouper)"}" aria-label="Grouper ou séparer">${ic("pile", "s")}</button>` : ""}
     ${ui.type === "jeu" && formesJeux() ? (x => `<button class="pile-btn on" data-action="mode-jeux" title="${x.nom} (toucher pour changer)" aria-label="Forme des jeux : ${x.nom}">${ic(x.icone, "s")}</button>`)(MODES_JEUX.find(x => x.id === modeJeux())) : ""}
@@ -1944,7 +1946,7 @@ async function rassemblerSagas(liste, { annoncer = false } = {}) {
       try { resultats.set(m.id, await infosSaga(m.type, m.titre, m.annee, m.wd)); }
       catch (e) { /* pas de réseau pour cette fiche : on la reverra une autre fois */ }
       rassemblement.fait++;
-      if (annoncer && rassemblement.fait % 40 === 0) afficherToast(`Sagas : ${rassemblement.fait} / ${liste.length} fiches examinées…`);
+      if (annoncer === true && rassemblement.fait % 40 === 0) afficherToast(`Sagas : ${rassemblement.fait} / ${liste.length} fiches examinées…`);
     }
   };
   await Promise.all([ouvrier(), ouvrier(), ouvrier(), ouvrier()]);
@@ -1963,7 +1965,9 @@ async function rassemblerSagas(liste, { annoncer = false } = {}) {
   ecrireMedias([...modifiees].map(id => medias.get(id)).filter(Boolean));
   rassemblement = null;
   rendreContenu();
-  if (annoncer) afficherToast(`Sagas rassemblées : ${donnees.sagas.filter(s => tomesDe(s).length >= 2).length}`);
+  // annoncer : true = lancé à la main (on dit toujours le résultat) ; "si-trouve" = automatique, message seulement s'il y a des sagas
+  const nbSagas = donnees.sagas.filter(s => tomesDe(s).length >= 2).length;
+  if (annoncer === true || (annoncer && nbSagas)) afficherToast(`Sagas rassemblées : ${nbSagas}`);
   if (sagasEnAttente.length) { const suite = sagasEnAttente.map(m => medias.get(m.id)).filter(Boolean); sagasEnAttente = []; rassemblerSagas(suite); }
 }
 // Au premier lancement de la v0.10.1 : rassembler les fiches déjà là (une seule fois, tous appareils)
@@ -1971,8 +1975,8 @@ function rassemblementInitial() {
   if (donnees.sagasRassemblees || rassemblement) return;
   donnees.sagasRassemblees = true;
   sauverDonnees();
-  afficherToast("Rassemblement des sagas en cours (en arrière-plan)…");
-  rassemblerSagas([...medias.values()], { annoncer: true });
+  // en silence (le message recouvrait la fiche ouverte au démarrage — audit E4)
+  rassemblerSagas([...medias.values()], { annoncer: "si-trouve" });
 }
 // --- Affiche de la saga : un tome, une affiche trouvée en ligne, ou celle par défaut (tome 1) ---
 function ouvrirAfficheSaga(s) {

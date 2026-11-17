@@ -1,5 +1,11 @@
 # Médiathèque — journal des nouveautés
 
+## v0.10.7 — 2026-11-17
+- Téléphone : boutons plus faciles à toucher (icônes du haut, Tags, tri, vues, piles, choix et pastilles de couleur des Réglages), sans rien faire déborder à 384 px.
+- Le libellé du tri se termine par « … » quand la place manque (petits écrans) au lieu d'être coupé net.
+- Page vide : un bouton « Ajouter » sous « Rien ici pour l'instant ».
+- Le rassemblement automatique des sagas se fait en silence (plus de message par-dessus la fiche au démarrage) ; un message seulement s'il a trouvé des sagas.
+
 ## v0.10.6 — 2026-11-17
 - « Chargement… » au démarrage au lieu d'un écran vide ; si la base ne répond pas : un message clair (serveur lent, hors ligne au tout premier lancement, ou lecture refusée).
 - Indicateur de synchro plus honnête : « Synchronisé » seulement après une vraie réponse du serveur (sinon « Connexion au serveur… »).
