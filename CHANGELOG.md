@@ -1,5 +1,11 @@
 # Médiathèque — journal des nouveautés
 
+## v0.12.0 — 2026-11-20
+- **Nouvel ajout de date** (fiche, saisons, Trier › Compléter) : bandeau d'années à faire glisser + grille des 12 mois. Un mois touché = la date ; un 2e mois = la période (« oct. – déc. 2023 ») ; un 3e = on recommence. Liens Toute l'année, Jour (grille des jours du mois), Saisons (rangées), En cours. Plus de lignes De / À ni de calendrier du téléphone.
+- **Case à taper** en haut : « mars 24 », « 3/24 », « 12/03/2019 », « 2019 », « été 2023 », « oct - déc 23 »… La grille suit ce qui est tapé ; Entrée ajoute.
+- Aperçu de la date choisie à côté du bouton Ajouter, petit « pop » et vibration à chaque mois touché.
+- **Dates en pastilles arrondies** dans la fiche et dans Trier : « oct. – déc. 2023 », « déc. 24 – févr. 25 », « depuis sept. 2026 » (violet, avec un point). L'Excel garde l'ancien format.
+
 ## v0.11.1 — 2026-11-18
 - Fiche : la ligne « Tags » est alignée comme les autres, et « + tag » a l'allure d'une petite pastille.
 - PC : plus de note au clavier (touches 0 à 5), trop facile à toucher par erreur.

@@ -328,30 +328,39 @@ body.tel .panneau { display: none; }
 .sa.vue { background: var(--sunk); color: var(--ink); border-color: transparent; font-weight: 500; }
 .sa.encours { border-color: var(--st-encours); color: var(--st-encours); font-weight: 700; }
 .sa.plus, .sa.moins { min-width: 30px; color: var(--acc); }
-/* Période « En cours » (pas encore finie) : pastille violette */
-.chip.ouvert { border-color: var(--st-encours); color: var(--st-encours); }
-/* Saisie d'une date ou d'une période : saisons (raccourci), lignes De / À, grille de mois */
-.per { margin: 8px 0 4px; padding: 10px; border: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 9px; }
-.per-saisons { display: flex; gap: 4px; align-items: center; }
-.per-mini { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
-.per-sai { height: 26px; padding: 0 8px; white-space: nowrap; border: 1px solid var(--line); border-radius: 13px; font-size: 12px; background: var(--surface); transition: background-color .2s, color .2s, transform .38s var(--ressort); }
-.per-sai.on { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
-.per-sai:active, .per-mois button:active, .per-lien:active { transform: scale(.92); transition-duration: .08s; }
-.per-ligne { display: flex; gap: 8px; align-items: center; }
-.per-t { width: 20px; flex-shrink: 0; color: var(--muted); font-size: 12.5px; }
-.seg.petit { flex: 0 0 auto; }
-.seg.petit button { height: 26px; padding: 0 6px; font-size: 11.5px; }
-.per-ligne input { flex: 1; min-width: 0; height: 34px; padding: 0 4px 0 7px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
-.per-an { display: flex; align-items: center; justify-content: space-between; }
-.per-an button { width: 34px; height: 28px; display: grid; place-items: center; color: var(--muted); }
-.per-mois { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
-.per-mois button { height: 32px; border-radius: 2px; font-size: 12px; text-align: center; transition: background-color .2s, color .2s, transform .38s var(--ressort); }
-.per-mois button.futur { color: var(--faint); }
+/* Dates (pastilles arrondies) ; « en cours » = violet avec un point */
+.chip.date { height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: var(--sunk); white-space: nowrap; transition: transform .38s var(--ressort); }
+.chip.date:active { transform: scale(.92); transition-duration: .08s; }
+.chip.date.ouvert { background: color-mix(in srgb, var(--st-encours) 16%, var(--surface)); color: var(--st-encours); }
+.chip.date.ouvert::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+/* Saisie d'une date : case à taper, raccourcis, bandeau d'années, 12 mois, liens, résultat */
+.per { margin: 8px 0 4px; padding: 10px; border-radius: 6px; background: color-mix(in srgb, var(--sunk) 55%, var(--surface)); display: flex; flex-direction: column; gap: 9px; }
+.per-texte { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); outline: none; }
+.per-texte:focus { border-color: var(--acc); }
+.per-corps { display: flex; flex-direction: column; gap: 8px; }
+.per-ans { position: relative; display: flex;gap: 2px; overflow-x: auto; padding: 0 calc(50% - 27px);scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+.per-ans::-webkit-scrollbar { display: none; }
+.per-ans button { flex: 0 0 auto; width: 54px; height: 30px; border-radius: 15px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; transition: background-color .2s, color .2s; }
+.per-ans button.dans { color: var(--ink); font-weight: 600; }
+.per-ans button.on { background: var(--acc); color: var(--acc-ink); font-weight: 700; }
+.per-mois { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.per-mois button, .per-jours button { height: 36px; border-radius: 4px; background: var(--surface); font-size: 13px; text-align: center; box-shadow: 0 1px 1px rgba(var(--oc, 0, 0, 0), .06); transition: background-color .2s, color .2s, transform .38s var(--ressort); }
+.per-jours { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.per-jours button { height: 30px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .per-mois button.dans { background: var(--acc-soft); }
-.per-mois button.bout { background: var(--acc); color: var(--acc-ink); font-weight: 700; }
-.per-bas { display: flex; align-items: center; gap: 12px; }
-.per-lien { display: inline-flex; align-items: center; gap: 5px; height: 30px; color: var(--acc); font-size: 12.5px; font-weight: 500; }
-.per-lien.on { text-decoration: underline; text-underline-offset: 3px; }
+.per-mois button.bout, .per-jours button.bout { background: var(--acc); color: var(--acc-ink); font-weight: 700; }
+.per-mois button:disabled, .per-jours button:disabled { background: none; box-shadow: none; color: var(--faint); }
+.per-mois button:active, .per-jours button:active, .per-ans button:active, .per-lien:active, .per-sai:active { transform: scale(.92); transition-duration: .08s; }
+.per-liens { display: flex; flex-wrap: wrap; gap: 4px; }
+.per-lien { height: 28px; padding: 0 10px; border-radius: 14px; color: var(--acc); font-size: 12.5px; font-weight: 500; transition: background-color .2s, transform .38s var(--ressort); }
+.per-lien.on { background: var(--acc-soft); }
+.per-saisons { display: flex; gap: 4px; flex-wrap: wrap; }
+.per-sai { height: 28px; padding: 0 10px; white-space: nowrap; border-radius: 14px; font-size: 12.5px; background: var(--surface); transition: background-color .2s, color .2s, transform .38s var(--ressort); }
+.per-sai.on { background: var(--acc); color: var(--acc-ink); }
+.per-bas { display: flex; align-items: center; gap: 10px; }
+.per-res { flex: 1; min-width: 0; display: flex; }
+.per-res .vide { color: var(--faint); padding-left: 4px; }
+.per-res .chip.date { background: var(--surface); font-weight: 600; font-size: 13px; }
 .per-bas .btn { flex-shrink: 0; }
 .tri-bloc .per { margin: 4px 0 0; }
 .avis { display: block; width: 100%; margin-top: 10px; padding: 9px 11px; min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); line-height: 1.45; outline: none; }
