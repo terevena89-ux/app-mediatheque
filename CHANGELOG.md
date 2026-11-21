@@ -1,5 +1,10 @@
 # Médiathèque — journal des nouveautés
 
+## v0.14.0 — 2026-11-21
+- **Tri « Plateforme »** (jeux) : les jeux sont rangés par support, dans l'ordre de la liste des supports (Réglages), avec un titre par plateforme ; « Sans plateforme » à la fin.
+- Mode Cartouches : les jeux PC ne sont plus des disques mais **juste leur icône**, à plat, comme sur le bureau Windows (sans icône : petite tuile arrondie).
+- Mode Boîtes : les boîtes PC sont un peu plus grandes et leur tranche plus fine.
+
 ## v0.13.1 — 2026-11-21
 - Mode Boîtes : quand le jeu a sa vraie boîte (colonne « Image boîte »), plus de bandeau ni de tranche dessinés par-dessus (la boîte a déjà son logo PS1, Switch…) ; l'image remplit la coque. Les boîtes PC gardent leur tranche.
 - Reflet plus discret sur ces vraies boîtes.

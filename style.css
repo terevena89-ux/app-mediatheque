@@ -1029,6 +1029,18 @@ body.pc .mosa .vg.ct { border-radius: 0; }
 .ct-vraie .ct-e { border-radius: .6cqw; }
 .ct-vraie .ct-e::after { background: linear-gradient(125deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, 0) 38%); box-shadow: inset 0 0 1px rgba(0, 0, 0, .45); }
 .penche.ct-vraie .ct-e::after { background: radial-gradient(circle at var(--gx, 30%) var(--gy, 20%), rgba(255, 255, 255, .18), rgba(255, 255, 255, 0) 55%); }
+/* Boîte PC : un peu plus grande que les autres (déborde un peu dans l'espace entre les cases), tranche plus fine */
+.ct-pc { --w: 106%; --et: 4% 7% 0 0; }
+.ct-pc > .ct-c::after { width: 7.5%; clip-path: polygon(0 4%, 100% 0, 100% 96%, 0 100%); }
+.ct-vraie.ct-pc { --et: 4% 7% 0 0; }
+/* Jeux PC en mode cartouches : juste l'icône, à plat, comme sur le bureau Windows (sans icône : tuile arrondie) */
+.ct-icone { --w: 62%; --ar: 1; --cc: transparent; --et: 0; --rad: 0; --biseau: none; --relief: none; --ep: transparent; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); }
+.mc .ct-icone, .mc .ct-icone.penche { transform: none; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); }
+.ct-icone .ct-e { border-radius: 18%; }
+.ct-icone .ct-e::after { display: none; }
+.ct-icone .ct-e:has(img) { background: none !important; border-radius: 0; }
+.ct-icone .ct-e:has(img) > b { display: none; }
+.ct-icone .ct-e img { object-fit: contain; }
 /* Disque (CD, DVD, Blu-ray) : l'image couvre le disque, trou au centre, reflets en éventail */
 .ct-disque { --w: 94%; --ar: 1; --cc: #C9CCD3; --et: 2.5%; --rad: 50%; }
 .ct-disque > .ct-c { -webkit-mask: radial-gradient(circle, transparent 6.4%, #000 7.2%); mask: radial-gradient(circle, transparent 6.4%, #000 7.2%); }

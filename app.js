@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.13.1";
+const VERSION = "v0.14.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -76,8 +76,9 @@ const pageValide = () => { if (!pagesDe(ui.type).includes(ui.page)) ui.page = 0;
 
 const TRIS = [
   { id: "ajout", nom: "Ajout récent" }, { id: "titre", nom: "Titre" }, { id: "annee", nom: "Année" },
-  { id: "note", nom: "Note" }, { id: "vu", nom: "Dernier vu" }
+  { id: "note", nom: "Note" }, { id: "vu", nom: "Dernier vu" }, { id: "plateforme", nom: "Plateforme", jeux: true }
 ];
+const trisDe = type => TRIS.filter(t => !t.jeux || type === "jeu");
 const VUES = [
   { id: "liste", nom: "Liste", icone: "vliste" }, { id: "compact", nom: "Compacte", icone: "vcompact" },
   { id: "mosa", nom: "Mosaïque", icone: "vmosa" }, { id: "tab", nom: "Tableau", icone: "vtab" }
@@ -437,7 +438,7 @@ const CARTOUCHES = [
   [/ps ?1|ps ?one|psx|playstation/, "disque noir", "cd"], [/dreamcast|saturn|mega ?cd/, "disque", "cd"],
   [/wii ?u/, "disque", "boitier wiiu"], [/wii/, "disque", "boitier wii"], [/gamecube|\bn?gc\b/, "disque mini", "boitier gc"], [/xbox/, "disque", "boitier xbox"],
   [/\bs?nes\b|super nintendo|nintendo 64|\bn64\b|mega ?drive|genesis|master system|atari|neo ?geo|famicom|cartouche/, "retro", "carton large"],
-  [/\bpc\b|steam|\bmac\b|linux|windows|ordi/, "disque", "pc"],
+  [/\bpc\b|steam|\bmac\b|linux|windows|ordi/, "icone", "pc"],   // PC : icône comme sur le bureau, pas de disque
   [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel", "tel"]
 ];
 // Mode d'affichage des jeux, gardé sur cet appareil : cart (cartouches et disques), boite, affiche
@@ -764,6 +765,7 @@ function correspond(m) {
   }
   return true;
 }
+const rangSupport = m => { if (!m.support) return 1e4; const i = donnees.supports.indexOf(m.support); return i < 0 ? 1e3 : i; };
 function trier(liste) {
   const tri = reglages.tris[ui.type] || "ajout";
   const fr = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
@@ -772,7 +774,9 @@ function trier(liste) {
     titre: (a, b) => fr.compare(a.titre, b.titre),
     annee: (a, b) => (b.annee || 0) - (a.annee || 0) || fr.compare(a.titre, b.titre),
     note: (a, b) => b.note - a.note || fr.compare(a.titre, b.titre),
-    vu: (a, b) => valeurDate(dernierPassage(b)) - valeurDate(dernierPassage(a)) || b.cree - a.cree
+    vu: (a, b) => valeurDate(dernierPassage(b)) - valeurDate(dernierPassage(a)) || b.cree - a.cree,
+    // Jeux : dans l'ordre de la liste des supports (Réglages), sans plateforme à la fin
+    plateforme: (a, b) => rangSupport(a) - rangSupport(b) || fr.compare(a.support || "", b.support || "") || fr.compare(a.titre, b.titre)
   }[tri];
   return liste.sort(f);
 }
@@ -844,6 +848,7 @@ function etapeDe(m, tri) {
   if (tri === "note") return m.note ? "★".repeat(m.note) : "Sans note";
   if (tri === "annee") return m.annee ? String(m.annee) : "Sans année";
   if (tri === "titre") { const c = simplifier(m.titre).charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; }
+  if (tri === "plateforme") return m.support || "Sans plateforme";
   if (tri === "vu") {
     const d = lireDate(dernierPassage(m));
     return !d ? "Pas de date" : d.enfance ? "Enfance" : String(Math.floor(d.mois / 12));
@@ -3158,8 +3163,8 @@ document.addEventListener("click", e => {
     case "fermer-recherche":
       rechercheTelOuverte = false; ui.recherche = ""; $("recherche-tel").value = ""; $("cherche-tel").hidden = true; rendreContenu(); return;
     case "menu-tri":
-      ouvrirMenu(el, TRIS.map(t => ({ nom: t.nom, coche: (reglages.tris[ui.type] || "ajout") === t.id })), i => {
-        reglages.tris[ui.type] = TRIS[i].id; changerReglage("tris", reglages.tris); rendreOutils(); rendreContenu();
+      ouvrirMenu(el, trisDe(ui.type).map(t => ({ nom: t.nom, coche: (reglages.tris[ui.type] || "ajout") === t.id })), i => {
+        reglages.tris[ui.type] = trisDe(ui.type)[i].id; changerReglage("tris", reglages.tris); rendreOutils(); rendreContenu();
       });
       return;
     case "menu-tags": {
