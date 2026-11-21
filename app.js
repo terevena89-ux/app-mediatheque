@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.13.0";
+const VERSION = "v0.13.1";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -421,7 +421,8 @@ function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   // id lu dans data-sid (échappé) et jamais collé dans le code du onerror (audit A4)
   const secours = hd && m.image && m.miniature && m.id ? "secoursImage(this,this.dataset.sid)" : "this.remove()";
   const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img referrerpolicy="no-referrer" src="${echapper(src)}" data-sid="${echapper(m.id)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
-  if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
+  // Vraie boîte (image avec déjà le logo de la console) : pas de bandeau dessiné en plus (ct-vraie)
+  if (forme) return `<span class="vg ct ${classe}"><span class="ct-o ct-${forme.replace(/ /g, " ct-")}${perso && mode === "boite" ? " ct-vraie" : ""}"><span class="ct-c" data-s="${echapper(m.support)}"><span class="ct-e" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}</span></span></span>`;
   return `<span class="vg ${classe}" style="background:${degrade(m.titre)}">${dedans}</span>${dessus}`;
 }
 // Forme d'après le nom du support (les supports sont modifiables dans Réglages : on reconnaît donc des mots,

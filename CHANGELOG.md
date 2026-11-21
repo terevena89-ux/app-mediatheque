@@ -1,5 +1,9 @@
 # Médiathèque — journal des nouveautés
 
+## v0.13.1 — 2026-11-21
+- Mode Boîtes : quand le jeu a sa vraie boîte (colonne « Image boîte »), plus de bandeau ni de tranche dessinés par-dessus (la boîte a déjà son logo PS1, Switch…) ; l'image remplit la coque. Les boîtes PC gardent leur tranche.
+- Reflet plus discret sur ces vraies boîtes.
+
 ## v0.13.0 — 2026-11-20
 - **Excel : 2 colonnes pour les jeux**, « Image boîte » (la vraie boîte du jeu) et « Image cartouche » (étiquette de cartouche, disque, ou icône pour les jeux PC). Elles s'exportent et se réimportent ; même adresse qu'avant = la copie déjà faite est gardée. Un ancien fichier sans ces colonnes ne touche pas aux images.
 - Après l'import, une petite copie de chaque nouvelle image est faite en arrière-plan (3 essais au plus).
