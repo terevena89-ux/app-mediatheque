@@ -1,5 +1,11 @@
 # Médiathèque — journal des nouveautés
 
+## v0.13.0 — 2026-11-20
+- **Excel : 2 colonnes pour les jeux**, « Image boîte » (la vraie boîte du jeu) et « Image cartouche » (étiquette de cartouche, disque, ou icône pour les jeux PC). Elles s'exportent et se réimportent ; même adresse qu'avant = la copie déjà faite est gardée. Un ancien fichier sans ces colonnes ne touche pas aux images.
+- Après l'import, une petite copie de chaque nouvelle image est faite en arrière-plan (3 essais au plus).
+- Copie des images : si un site refuse la copie (LaunchBox, Steam…), 2e essai via le relais gratuit wsrv.nl.
+- Import : corrige un plantage avec l'onglet « Sagas » quand l'appli n'avait encore aucune saga.
+
 ## v0.12.0 — 2026-11-20
 - **Nouvel ajout de date** (fiche, saisons, Trier › Compléter) : bandeau d'années à faire glisser + grille des 12 mois. Un mois touché = la date ; un 2e mois = la période (« oct. – déc. 2023 ») ; un 3e = on recommence. Liens Toute l'année, Jour (grille des jours du mois), Saisons (rangées), En cours. Plus de lignes De / À ni de calendrier du téléphone.
 - **Case à taper** en haut : « mars 24 », « 3/24 », « 12/03/2019 », « 2019 », « été 2023 », « oct - déc 23 »… La grille suit ce qui est tapé ; Entrée ajoute.

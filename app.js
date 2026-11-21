@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.12.0";
+const VERSION = "v0.13.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -261,7 +261,8 @@ function normaliser(id, d) {
     // Jeux (v0.10.3) : images à part pour la cartouche / le disque (cart) et pour la boîte (boite) ; vide = l'affiche
     imgs: Object.fromEntries(["cart", "boite"].map(k => [k, {
       image: lienValide(d.imgs?.[k]?.image),
-      miniature: typeof d.imgs?.[k]?.miniature === "string" && d.imgs[k].miniature.startsWith("data:image/") ? d.imgs[k].miniature : ""
+      miniature: typeof d.imgs?.[k]?.miniature === "string" && d.imgs[k].miniature.startsWith("data:image/") ? d.imgs[k].miniature : "",
+      essais: +d.imgs?.[k]?.essais || 0   // copies ratées (image venue de l'Excel), retentées 3 fois au plus
     }])),
     // true = ajoutée par « Trier › Vérifier » et pas encore validée : cachée partout ailleurs
     aVerifier: !!d.aVerifier,
@@ -715,7 +716,23 @@ async function ameliorerMiniatures() {
     }
     await new Promise(r => setTimeout(r, 400));   // sans surcharger le téléphone ni les sites
   }
-  if (aRefaire.length) rafraichir();
+  // Jeux : images boîte / cartouche reçues par l'Excel (adresse seule) → petite copie gardée dans la fiche
+  const jeux = [...medias.values()].filter(m => m.type === "jeu" && ["cart", "boite"].some(k => m.imgs[k].image && !m.imgs[k].miniature && m.imgs[k].essais < 3)).map(m => m.id);
+  for (const id of jeux) {
+    for (const k of ["boite", "cart"]) {
+      if (!navigator.onLine) return;
+      const m = medias.get(id), v = m?.imgs[k];
+      if (!v?.image || v.miniature || v.essais >= 3) continue;
+      const mini = await copierImage(v.image);
+      const x = medias.get(id);
+      if (x && x.imgs[k].image === v.image) {
+        x.imgs = { ...x.imgs, [k]: mini ? { image: v.image, miniature: mini, essais: 0 } : { ...v, essais: v.essais + 1 } };
+        if (mini || navigator.onLine) ecrireMedia(x);
+      }
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  if (aRefaire.length || jeux.length) rafraichir();
 }
 
 // ---------- 5. Affichage ----------
@@ -3683,7 +3700,8 @@ const COLONNES = [
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
   { header: "Saga", key: "saga", width: 22 }, { header: "Tome", key: "tome", width: 6 },
   { header: "Saisons", key: "saisons", width: 16 }, { header: "Avis", key: "avis", width: 40 },
-  { header: "Image", key: "image", width: 30 }, { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
+  { header: "Image", key: "image", width: 30 }, { header: "Image boîte", key: "imgBoite", width: 30 }, { header: "Image cartouche", key: "imgCart", width: 30 },
+  { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
   { header: "Ajouté le", key: "ajoute", width: 12 }
 ];
 const COLONNES_SAGAS = [
@@ -3713,7 +3731,7 @@ async function exporterExcel() {
       genres: m.genres.join(", "), tags: m.tags.join(", "),
       saga: sagaPar(m.saga)?.nom || "", tome: m.tome || "",
       saisons: suiviSaisons(m) ? resumeSaisons(m) : "", avis: m.avis,
-      image: m.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
+      image: m.image, imgBoite: m.imgs.boite.image, imgCart: m.imgs.cart.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
     })));
     // Miniatures dans la 1re colonne
     liste.forEach((m, i) => {
@@ -3781,7 +3799,8 @@ async function importerExcel(champ) {
     };
     const feuilleSagas = classeur.getWorksheet("Sagas");
     if (feuilleSagas) lireFeuille(feuilleSagas).filter(l => l["Saga"]).forEach(l => {
-      const s = sagasImport.find(x => x.id === sagaDe(typeDuTexte(l["Type"]), l["Saga"]));
+      // (sagaDe d'abord : appelée dans find, elle ne tournait jamais sur une liste encore vide)
+      const id = sagaDe(typeDuTexte(l["Type"]), l["Saga"]), s = sagasImport.find(x => x.id === id);
       s.note = Math.max(0, Math.min(5, Math.round(+l["Note"] || 0))); s.image = lienValide(l["Image"]);
     });
     // Saisons : onglet « Saisons » (une ligne par saison)
@@ -3793,6 +3812,14 @@ async function importerExcel(champ) {
       saisonsImport.get(k).push({ n: +l["Saison"], statut: Object.keys(NOMS_SAISON).find(st => simplifier(NOMS_SAISON[st]) === simplifier(l["Statut"])) || "avoir",
         note: l["Note"], image: l["Image"], passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean) });
     });
+    // Jeux : colonnes « Image boîte » / « Image cartouche » (cartouche, disque ou icône PC). Même adresse qu'avant :
+    // on garde la copie déjà faite ; ancien fichier sans ces colonnes : on garde les images de l'appli.
+    const colImgs = lignes.some(l => Object.keys(l).includes("Image boîte"));
+    const imgDe = (url, avant) => {
+      if (!colImgs) return avant;
+      url = lienValide(url);
+      return url && avant?.image === url ? avant : { image: url, miniature: "", essais: 0 };
+    };
     const nouvelles = lignes.map((l, i) => {
       const type = typeDuTexte(l["Type"]), a = reprendre(cle(type, l["Titre"]));
       const saisons = /^(\d+)\/(\d+)$/.exec(l["Saisons"] || "");
@@ -3803,7 +3830,7 @@ async function importerExcel(champ) {
         revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], notePlusTard: simplifier(l["Note plus tard"]) === "oui", coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, mq: a?.mq, imgs: a?.imgs, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
+        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, mq: a?.mq, imgs: { boite: imgDe(l["Image boîte"], a?.imgs?.boite), cart: imgDe(l["Image cartouche"], a?.imgs?.cart) }, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
         saisons: listeSaisons ? { actif: true, liste: listeSaisons }
           : saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
         saga: colSaga ? sagaDe(type, l["Saga"]) : (a?.saga || ""), tome: colSaga ? l["Tome"] : a?.tome, wd: a?.wd, sagaCherchee: !!l["Saga"] || a?.sagaCherchee, sagaManuel: a?.sagaManuel,
@@ -3829,6 +3856,7 @@ async function importerExcel(champ) {
     if (feuilleSagas || sagasImport.length) donnees.sagasRassemblees = true;
     sauverDonnees();
     retour();
+    if (colImgs) setTimeout(ameliorerMiniatures, 3000);   // copies des nouvelles images de jeux
     afficherToast(`Import terminé : ${nouvelles.length} fiches`, async () => {
       const remises = new Set(avant.map(m => m.id));
       try { await ecrireMediasAttendu(avant); }

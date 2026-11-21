@@ -4,7 +4,7 @@
 // même sans réseau. (Les données, elles, sont gérées par Firebase.)
 // À CHAQUE NOUVELLE VERSION : changer le numéro ci-dessous.
 // =========================================================
-const CACHE = "mediatheque-v0.12.0";
+const CACHE = "mediatheque-v0.13.0";
 // Bibliothèques à version fixe : cache à part, gardé d'une version à l'autre
 // (sinon elles sont effacées à chaque mise à jour et l'appli ne s'ouvre plus hors ligne juste après — audit B11).
 // Changer ce nom seulement si on change de version de Firebase ou d'ExcelJS.

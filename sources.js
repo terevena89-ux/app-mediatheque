@@ -493,7 +493,14 @@ function versJPEG(img) {
   g.drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.8);   // lève une erreur si le site refuse la copie
 }
-export function copierImage(url) {
+// Site qui refuse la copie (LaunchBox, Steam…) : 2e essai via wsrv.nl, relais d'images gratuit sans compte
+// qui ajoute l'autorisation de copie. S'il tombe, la fiche garde juste l'adresse (comme avant).
+export async function copierImage(url) {
+  const mini = await copierDirect(url);
+  if (mini || !/^https:\/\//i.test(url || "") || /^https:\/\/wsrv\.nl\//i.test(url)) return mini;
+  return copierDirect(`https://wsrv.nl/?url=${encodeURIComponent(url)}&w=${LARGEUR * 2}&h=${HAUTEUR * 2}&fit=inside`);
+}
+function copierDirect(url) {
   return new Promise(ok => {
     if (!/^https:\/\//i.test(url || "")) return ok("");
     const img = new Image();
