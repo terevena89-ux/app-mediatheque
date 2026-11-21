@@ -1,5 +1,9 @@
 # Médiathèque — journal des nouveautés
 
+## v0.15.0 — 2026-11-21
+- **Excel : une feuille par catégorie** (Jeux, Films, Séries, Livres, Courts), chacune avec seulement ses colonnes utiles (Support, Infini, Image boîte / cartouche pour les jeux ; Saisons pour les séries ; Saga / Tome sauf séries). Plus de colonne « Type » : c'est le nom de la feuille.
+- L'ancien format (une seule feuille « Médias ») n'est plus lu à l'import.
+
 ## v0.14.0 — 2026-11-21
 - **Tri « Plateforme »** (jeux) : les jeux sont rangés par support, dans l'ordre de la liste des supports (Réglages), avec un titre par plateforme ; « Sans plateforme » à la fin.
 - Mode Cartouches : les jeux PC ne sont plus des disques mais **juste leur icône**, à plat, comme sur le bureau Windows (sans icône : petite tuile arrondie).

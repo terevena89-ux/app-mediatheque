@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.14.0";
+const VERSION = "v0.15.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -3697,19 +3697,22 @@ addEventListener("resize", () => { poserPlaquetteOnglets(); poserPastilleVues();
 // ---------- 10. Excel ----------
 // Feuille « Médias » (une ligne par fiche, avec une miniature de l'affiche) et feuille « Supports ».
 const COLONNES = [
-  { header: "Affiche", key: "affiche", width: 7 }, { header: "Type", key: "type", width: 8 },
+  { header: "Affiche", key: "affiche", width: 7 },
   { header: "Titre", key: "titre", width: 36 }, { header: "Année", key: "annee", width: 8 },
   { header: "Créateur", key: "createur", width: 24 }, { header: "Statut", key: "statut", width: 12 },
-  { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7 }, { header: "Note", key: "note", width: 7 }, { header: "Note plus tard", key: "notePlusTard", width: 13 },
+  { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7, seul: ["jeu"] }, { header: "Note", key: "note", width: 7 }, { header: "Note plus tard", key: "notePlusTard", width: 13 },
   { header: "Coup de cœur", key: "coeur", width: 12 }, { header: "Vu", key: "vu", width: 26 },
-  { header: "Support", key: "support", width: 14 },
+  { header: "Support", key: "support", width: 14, seul: ["jeu"] },
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
-  { header: "Saga", key: "saga", width: 22 }, { header: "Tome", key: "tome", width: 6 },
-  { header: "Saisons", key: "saisons", width: 16 }, { header: "Avis", key: "avis", width: 40 },
-  { header: "Image", key: "image", width: 30 }, { header: "Image boîte", key: "imgBoite", width: 30 }, { header: "Image cartouche", key: "imgCart", width: 30 },
+  { header: "Saga", key: "saga", width: 22, seul: ["livre", "film", "jeu", "court"] }, { header: "Tome", key: "tome", width: 6, seul: ["livre", "film", "jeu", "court"] },
+  { header: "Saisons", key: "saisons", width: 16, seul: ["serie"] }, { header: "Avis", key: "avis", width: 40 },
+  { header: "Image", key: "image", width: 30 }, { header: "Image boîte", key: "imgBoite", width: 30, seul: ["jeu"] }, { header: "Image cartouche", key: "imgCart", width: 30, seul: ["jeu"] },
   { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
   { header: "Ajouté le", key: "ajoute", width: 12 }
 ];
+// Une feuille par type (v0.15) : Jeux, Films, Séries, Livres, Courts — chacune avec seulement ses colonnes utiles
+const nomFeuille = t => t.court || t.nom;
+const colonnesDe = type => COLONNES.filter(c => !c.seul || c.seul.includes(type)).map(({ seul, ...c }) => c);
 const COLONNES_SAGAS = [
   { header: "Saga", key: "nom", width: 30 }, { header: "Type", key: "type", width: 8 }, { header: "Note", key: "note", width: 7 }, { header: "Image", key: "image", width: 40 }
 ];
@@ -3728,25 +3731,27 @@ async function exporterExcel() {
     const ExcelJS = await chargerExcelJS();
     const classeur = new ExcelJS.Workbook();
     classeur.creator = "Médiathèque";
-    const ordreType = t => TYPES.findIndex(x => x.id === t);
-    const liste = [...medias.values()].sort((a, b) => ordreType(a.type) - ordreType(b.type) || STATUTS.indexOf(a.statut) - STATUTS.indexOf(b.statut) || a.titre.localeCompare(b.titre, "fr"));
-    const ws = ajouterFeuille(classeur, "Médias", COLONNES, liste.map(m => ({
-      affiche: "", type: typeDe(m.type).un, titre: m.titre, annee: m.annee || "", createur: m.createur,
-      statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", notePlusTard: ouiNon(m.notePlusTard), coeur: ouiNon(m.coeur),
-      vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
-      genres: m.genres.join(", "), tags: m.tags.join(", "),
-      saga: sagaPar(m.saga)?.nom || "", tome: m.tome || "",
-      saisons: suiviSaisons(m) ? resumeSaisons(m) : "", avis: m.avis,
-      image: m.image, imgBoite: m.imgs.boite.image, imgCart: m.imgs.cart.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
-    })));
-    // Miniatures dans la 1re colonne
-    liste.forEach((m, i) => {
-      if (!m.miniature) return;
-      const id = classeur.addImage({ base64: m.miniature, extension: "jpeg" });
-      ws.getRow(i + 2).height = 40;
-      ws.addImage(id, { tl: { col: 0.15, row: i + 1.08 }, ext: { width: 34, height: 51 } });
-    });
-    ws.getColumn("avis").alignment = { wrapText: true, vertical: "middle" };
+    const liste = [...medias.values()].sort((a, b) => STATUTS.indexOf(a.statut) - STATUTS.indexOf(b.statut) || a.titre.localeCompare(b.titre, "fr"));
+    for (const t of TYPES) {
+      const duType = liste.filter(m => m.type === t.id);
+      const ws = ajouterFeuille(classeur, nomFeuille(t), colonnesDe(t.id), duType.map(m => ({
+        affiche: "", titre: m.titre, annee: m.annee || "", createur: m.createur,
+        statut: nomStatut(m.statut, m.type), revoir: ouiNon(m.revoir), infini: ouiNon(m.infini), note: m.note || "", notePlusTard: ouiNon(m.notePlusTard), coeur: ouiNon(m.coeur),
+        vu: m.passages.map(p => texteDate(p)).join(" ; "), support: m.support,
+        genres: m.genres.join(", "), tags: m.tags.join(", "),
+        saga: sagaPar(m.saga)?.nom || "", tome: m.tome || "",
+        saisons: suiviSaisons(m) ? resumeSaisons(m) : "", avis: m.avis,
+        image: m.image, imgBoite: m.imgs.boite.image, imgCart: m.imgs.cart.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
+      })));
+      // Miniatures dans la 1re colonne
+      duType.forEach((m, i) => {
+        if (!m.miniature) return;
+        const id = classeur.addImage({ base64: m.miniature, extension: "jpeg" });
+        ws.getRow(i + 2).height = 40;
+        ws.addImage(id, { tl: { col: 0.15, row: i + 1.08 }, ext: { width: 34, height: 51 } });
+      });
+      ws.getColumn("avis").alignment = { wrapText: true, vertical: "middle" };
+    }
     ajouterFeuille(classeur, "Supports", [{ header: "Support", key: "s", width: 22 }], donnees.supports.map(s => ({ s })));
     // « Pas intéressé » (mode Découvrir) : invisibles dans l'appli, mais gardés ici
     ajouterFeuille(classeur, "Pas intéressés", COLONNES_REJETES, donnees.rejetes.map(r => ({
@@ -3769,8 +3774,9 @@ async function importerExcel(champ) {
   if (!await confirmer("Remplacer toutes tes fiches ?", "Le contenu du fichier remplace tout ce qu'il y a dans l'appli.", { ok: "Remplacer", danger: true })) return;
   try {
     const classeur = await lireClasseur(fichier);
-    const lignes = lireFeuille(classeur.getWorksheet("Médias")).filter(l => l["Titre"]);
-    if (!lignes.length) throw new Error("feuille « Médias » introuvable ou vide");
+    // Une feuille par type (le type vient du nom de la feuille) ; l'ancien format « Médias » n'est plus lu
+    const lignes = TYPES.flatMap(t => lireFeuille(classeur.getWorksheet(nomFeuille(t))).filter(l => l["Titre"]).map(l => ({ ...l, Type: t.un })));
+    if (!lignes.length) throw new Error("feuilles Jeux / Films / Séries / Livres / Courts introuvables ou vides");
     const supports = lireFeuille(classeur.getWorksheet("Supports")).map(l => l["Support"]).filter(Boolean);
     // Onglet « Pas intéressés » (s'il existe dans le fichier : sinon on garde ceux de l'appli)
     const feuilleRejetes = classeur.getWorksheet("Pas intéressés");
