@@ -1,5 +1,10 @@
 # Médiathèque — journal des nouveautés
 
+## v0.16.0 — 2026-11-21
+- **Jeux : 2 modes seulement**, Boîtes ou Cartouches (plus de mode Affiches, plus de réglage « Formes »). L'image d'un jeu, c'est sa boîte, dans les listes comme dans la fiche ; pour un jeu PC acheté en démat, sa boîte c'est son affiche. « Choisir l'image » d'un jeu : Boîte ou Cartouche.
+- **Excel : les vraies images dans les cases** (Affiche ; pour les jeux, Boîte et Cartouche), avec le lien à côté. Feuille Jeux : plus de colonnes « Affiche », « Image » ni « Affiche choisie ».
+- **Import : les images de l'Excel sont reprises** dans les fiches (elles restent même si le site d'origine disparaît).
+
 ## v0.15.0 — 2026-11-21
 - **Excel : une feuille par catégorie** (Jeux, Films, Séries, Livres, Courts), chacune avec seulement ses colonnes utiles (Support, Infini, Image boîte / cartouche pour les jeux ; Saisons pour les séries ; Saga / Tome sauf séries). Plus de colonne « Type » : c'est le nom de la feuille.
 - L'ancien format (une seule feuille « Médias ») n'est plus lu à l'import.

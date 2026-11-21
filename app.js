@@ -31,7 +31,7 @@ import { CATEGORIES } from "./decouvrir.js";
 
 // ---------- 1. Réglages de base, mots, petits outils ----------
 
-const VERSION = "v0.15.0";
+const VERSION = "v0.16.0";
 const NOM_APPLI = "app-mediatheque";   // nom du dossier dans Firestore et des fichiers Excel
 
 const TYPES = [
@@ -418,7 +418,9 @@ function vignette(m, classe = "", hd = false, cartouche = false, dessus = "") {
   // ou d'une boîte à la forme du support (bouton de la barre d'outils : cartouches / boîtes / affiches)
   const mode = cartouche ? modeJeux() : "affiche", forme = mode !== "affiche" && formeCartouche(m, mode);
   const perso = forme && (m.imgs?.[mode]?.miniature || m.imgs?.[mode]?.image);   // image choisie pour ce mode
-  const src = perso || (hd && m.image ? m.image : (m.miniature || m.image));
+  // Jeux (v0.16) : plus d'affiche à part, l'image d'un jeu c'est sa boîte (jeu PC : l'affiche sert de boîte)
+  const boite = m.type === "jeu" && !perso && (hd ? m.imgs?.boite?.image || m.imgs?.boite?.miniature : m.imgs?.boite?.miniature || m.imgs?.boite?.image);
+  const src = perso || boite || (hd && m.image ? m.image : (m.miniature || m.image));
   // id lu dans data-sid (échappé) et jamais collé dans le code du onerror (audit A4)
   const secours = hd && m.image && m.miniature && m.id ? "secoursImage(this,this.dataset.sid)" : "this.remove()";
   const dedans = `<b>${echapper(initiale(m.titre))}</b>${src ? `<img referrerpolicy="no-referrer" src="${echapper(src)}" data-sid="${echapper(m.id)}" alt="" loading="lazy" decoding="async" onerror="${secours}">` : ""}`;
@@ -442,9 +444,9 @@ const CARTOUCHES = [
   [/telephone|mobile|android|\bios\b|iphone|ipad|tablette/, "tel", "tel"]
 ];
 // Mode d'affichage des jeux, gardé sur cet appareil : cart (cartouches et disques), boite, affiche
-const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boitier" }, { id: "affiche", nom: "Affiches", icone: "affiche" }];
+const MODES_JEUX = [{ id: "cart", nom: "Cartouches et disques", icone: "cartouche" }, { id: "boite", nom: "Boîtes", icone: "boitier" }];
 // (Réglages › Jeux › « Formes » sur Non : tout revient aux affiches simples, et le bouton disparaît)
-const formesJeux = () => reglages.formesJeux !== "non";
+const formesJeux = () => true;   // (v0.16 : plus de réglage « Formes », toujours cartouches ou boîtes)
 const voirAussiActif = () => reglages.voirAussi !== "non";   // Réglages › Voir aussi (par appareil)
 const modeJeux = () => !formesJeux() ? "affiche" : MODES_JEUX.some(x => x.id === reglages.jeux) ? reglages.jeux : "cart";
 const jaquette = (m, classe = "", dessus = "") => vignette(m, classe, false, true, dessus);
@@ -1501,7 +1503,7 @@ function chargerVoirAussi(m) {
 // plus « Photo / fichier » et « Coller un lien ».
 let affChoix = null;   // { id, liste: [{ image, legende }] }
 function ouvrirAffiche(m) {
-  affChoix = { id: m.id, liste: [], cible: "affiche" };   // cible (jeux) : affiche, cart ou boite
+  affChoix = { id: m.id, liste: [], cible: m.type === "jeu" ? "boite" : "affiche" };   // cible (jeux) : boite ou cart
   const v2 = $("voile2");
   v2.className = "voile " + (estPC() ? "centre" : "bas");
   v2.innerHTML = `<div class="fenetre affiches" role="dialog" aria-label="Choisir l'affiche">
@@ -1535,9 +1537,10 @@ const imageCible = (m, cible = affChoix?.cible || "affiche") => cible === "affic
 function majGrilleAffiches(m, enCours, erreur) {
   if (!$("aff-grille")) return;
   const cible = affChoix.cible, act = imageCible(m);
-  if ($("aff-cible")) $("aff-cible").innerHTML = Object.entries(NOMS_CIBLE).map(([k, n]) => `<button data-aff-cible="${k}" aria-pressed="${k === cible}">${n}</button>`).join("");
+  if ($("aff-cible")) $("aff-cible").innerHTML = Object.entries(NOMS_CIBLE).filter(([k]) => k !== "affiche").map(([k, n]) => `<button data-aff-cible="${k}" aria-pressed="${k === cible}">${n}</button>`).join("");
   $("aff-info-txt").textContent = cible === "affiche" ? "Seulement des affiches en hauteur : les images larges (logos, captures) sont écartées."
-    : `Image montrée en mode « ${cible === "cart" ? "Cartouches et disques" : "Boîtes"} ». Sans image ici, c'est l'affiche qui sert.`;
+    : cible === "cart" ? "Image montrée en mode « Cartouches et disques » (jeu PC : son icône). Sans image ici, c'est la boîte qui sert."
+    : "Image du jeu : en mode « Boîtes » et dans la fiche (jeu PC : son affiche).";
   const actuelle = (act.miniature || act.image) ? `<div class="aff"><span class="aff-v on">${vignette({ titre: m.titre, ...act })}<span class="coche">${ic("ok")}</span></span><small>Actuelle${cible !== "affiche" ? ` · <button class="lien-txt" data-action="aff-enlever">enlever</button>` : ""}</small></div>` : "";
   $("aff-grille").innerHTML = actuelle + affChoix.liste.filter(a => a.image !== act.image).map(a => `<button class="aff" data-aff="${affChoix.liste.indexOf(a)}">
       <span class="aff-v">${vignette({ titre: m.titre, image: a.image, miniature: "" }).replace(' loading="lazy"', "").replace("<img ", `<img onload="verifierHauteur(this)" `)}</span><small>${echapper(a.legende)}</small></button>`).join("")
@@ -1546,7 +1549,7 @@ function majGrilleAffiches(m, enCours, erreur) {
 }
 // fermer = false : on reste où on est (mode Trier)
 function appliquerAffiche(m, { image = "", miniature = "" }, fermer = true) {
-  const cible = affChoix?.id === m.id ? affChoix.cible : "affiche";
+  const cible = affChoix?.id === m.id ? affChoix.cible : m.type === "jeu" ? "boite" : "affiche";   // jeu : son image = sa boîte
   if (cible !== "affiche") return appliquerImageJeu(m, cible, { image, miniature });
   const avant = { image: m.image, miniature: m.miniature, afficheChoisie: m.afficheChoisie };
   m.image = image; m.miniature = miniature; m.mq = 2; m.afficheChoisie = true;
@@ -1914,7 +1917,6 @@ function ouvrirReglages() {
     </div>
     <div class="sect">Jeux</div>
     <div class="groupe">
-      <div class="reg"><span>Formes<small class="petit-gris">cartouches, disques, boîtes</small></span>${seg("formesJeux", [["oui", "Oui"], ["non", "Non"]], formesJeux() ? "oui" : "non")}</div>
       <div class="reg"><span>Relief<small class="petit-gris">en mosaïque</small></span>${seg("relief", [["penche", "Penché"], ["survol", "Au survol"], ["non", "Non"]], reglages.relief || "penche")}</div>
     </div>
     <div class="sect">Listes</div>
@@ -3697,7 +3699,9 @@ addEventListener("resize", () => { poserPlaquetteOnglets(); poserPastilleVues();
 // ---------- 10. Excel ----------
 // Feuille « Médias » (une ligne par fiche, avec une miniature de l'affiche) et feuille « Supports ».
 const COLONNES = [
-  { header: "Affiche", key: "affiche", width: 7 },
+  // Colonnes « image » : la vraie image dans la case (petite copie) ; le lien est dans « Image… » plus loin
+  { header: "Affiche", key: "affiche", width: 7, img: "affiche", sauf: ["jeu"] },
+  { header: "Boîte", key: "boite", width: 7, img: "boite", seul: ["jeu"] }, { header: "Cartouche", key: "cart", width: 7, img: "cart", seul: ["jeu"] },
   { header: "Titre", key: "titre", width: 36 }, { header: "Année", key: "annee", width: 8 },
   { header: "Créateur", key: "createur", width: 24 }, { header: "Statut", key: "statut", width: 12 },
   { header: "À revoir", key: "revoir", width: 9 }, { header: "Infini", key: "infini", width: 7, seul: ["jeu"] }, { header: "Note", key: "note", width: 7 }, { header: "Note plus tard", key: "notePlusTard", width: 13 },
@@ -3706,13 +3710,48 @@ const COLONNES = [
   { header: "Genres", key: "genres", width: 24 }, { header: "Tags", key: "tags", width: 20 },
   { header: "Saga", key: "saga", width: 22, seul: ["livre", "film", "jeu", "court"] }, { header: "Tome", key: "tome", width: 6, seul: ["livre", "film", "jeu", "court"] },
   { header: "Saisons", key: "saisons", width: 16, seul: ["serie"] }, { header: "Avis", key: "avis", width: 40 },
-  { header: "Image", key: "image", width: 30 }, { header: "Image boîte", key: "imgBoite", width: 30, seul: ["jeu"] }, { header: "Image cartouche", key: "imgCart", width: 30, seul: ["jeu"] },
-  { header: "Affiche choisie", key: "afficheChoisie", width: 14 }, { header: "À vérifier", key: "aVerifier", width: 10 },
+  { header: "Image", key: "image", width: 30, sauf: ["jeu"] }, { header: "Image boîte", key: "imgBoite", width: 30, seul: ["jeu"] }, { header: "Image cartouche", key: "imgCart", width: 30, seul: ["jeu"] },
+  { header: "Affiche choisie", key: "afficheChoisie", width: 14, sauf: ["jeu"] }, { header: "À vérifier", key: "aVerifier", width: 10 },
   { header: "Ajouté le", key: "ajoute", width: 12 }
 ];
-// Une feuille par type (v0.15) : Jeux, Films, Séries, Livres, Courts — chacune avec seulement ses colonnes utiles
+// Une feuille par type (v0.15) : Jeux, Films, Séries, Livres, Courts — chacune avec seulement ses colonnes utiles.
+// Jeux (v0.16) : pas d'affiche, mais la boîte et la cartouche (jeu PC : affiche et icône).
 const nomFeuille = t => t.court || t.nom;
-const colonnesDe = type => COLONNES.filter(c => !c.seul || c.seul.includes(type)).map(({ seul, ...c }) => c);
+const colsDe = type => COLONNES.filter(c => (!c.seul || c.seul.includes(type)) && !(c.sauf || []).includes(type));
+const colonnesDe = type => colsDe(type).map(({ seul, sauf, img, ...c }) => c);
+// Petite copie gardée dans la fiche pour chaque colonne image
+const copieDe = (m, img) => img === "affiche" ? m.miniature : m.imgs?.[img]?.miniature || "";
+// Image d'une case Excel → adresse « data: » (trop grosse : ignorée, la fiche Firebase ne doit pas dépasser 1 Mo)
+function versDataURL(x) {
+  const ext = String(x.extension || "jpeg").replace("jpg", "jpeg");
+  let b64 = x.base64 ? String(x.base64).replace(/^data:[^,]*,/, "") : "";
+  if (!b64 && x.buffer) {
+    const u8 = x.buffer instanceof Uint8Array ? x.buffer : new Uint8Array(x.buffer);
+    let s = ""; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+    b64 = btoa(s);
+  }
+  return b64 && b64.length < 300000 ? `data:image/${ext};base64,${b64}` : "";
+}
+// Comme lireFeuille, mais garde aussi les images posées dans les cases : l._img("Boîte") → adresse « data: »
+function lireFeuilleImages(classeur, ws, type) {
+  if (!ws) return [];
+  const entetes = [], images = new Map();
+  ws.getRow(1).eachCell((c, i) => { entetes[i] = String(c.text).trim(); });
+  for (const im of ws.getImages?.() || []) {
+    const tl = im.range?.tl; if (!tl) continue;
+    const cle = `${Math.floor(tl.nativeRow ?? tl.row) + 1}:${Math.floor(tl.nativeCol ?? tl.col) + 1}`;
+    if (!images.has(cle)) { const d = versDataURL(classeur.getImage(+im.imageId) || {}); if (d) images.set(cle, d); }
+  }
+  const lignes = [];
+  ws.eachRow((rang, n) => {
+    if (n === 1) return;
+    const o = { Type: type };
+    entetes.forEach((h, i) => { if (h) o[h] = String(rang.getCell(i).text ?? "").trim(); });
+    Object.defineProperty(o, "_img", { value: h => images.get(`${n}:${entetes.indexOf(h)}`) || "" });
+    lignes.push(o);
+  });
+  return lignes;
+}
 const COLONNES_SAGAS = [
   { header: "Saga", key: "nom", width: 30 }, { header: "Type", key: "type", width: 8 }, { header: "Note", key: "note", width: 7 }, { header: "Image", key: "image", width: 40 }
 ];
@@ -3743,12 +3782,16 @@ async function exporterExcel() {
         saisons: suiviSaisons(m) ? resumeSaisons(m) : "", avis: m.avis,
         image: m.image, imgBoite: m.imgs.boite.image, imgCart: m.imgs.cart.image, afficheChoisie: ouiNon(m.afficheChoisie), aVerifier: ouiNon(m.aVerifier), ajoute: dateCourte(m.cree)
       })));
-      // Miniatures dans la 1re colonne
-      duType.forEach((m, i) => {
-        if (!m.miniature) return;
-        const id = classeur.addImage({ base64: m.miniature, extension: "jpeg" });
-        ws.getRow(i + 2).height = 40;
-        ws.addImage(id, { tl: { col: 0.15, row: i + 1.08 }, ext: { width: 34, height: 51 } });
+      // Vraies images dans les colonnes image (affiche ; jeux : boîte et cartouche)
+      colsDe(t.id).forEach((c, col) => {
+        if (!c.img) return;
+        duType.forEach((m, i) => {
+          const d = copieDe(m, c.img), ext = /^data:image\/(png|gif)/.exec(d)?.[1] || "jpeg";
+          if (!d) return;
+          const id = classeur.addImage({ base64: d, extension: ext });
+          ws.getRow(i + 2).height = 40;
+          ws.addImage(id, { tl: { col: col + 0.15, row: i + 1.08 }, ext: { width: 34, height: 51 } });
+        });
       });
       ws.getColumn("avis").alignment = { wrapText: true, vertical: "middle" };
     }
@@ -3775,7 +3818,7 @@ async function importerExcel(champ) {
   try {
     const classeur = await lireClasseur(fichier);
     // Une feuille par type (le type vient du nom de la feuille) ; l'ancien format « Médias » n'est plus lu
-    const lignes = TYPES.flatMap(t => lireFeuille(classeur.getWorksheet(nomFeuille(t))).filter(l => l["Titre"]).map(l => ({ ...l, Type: t.un })));
+    const lignes = TYPES.flatMap(t => lireFeuilleImages(classeur, classeur.getWorksheet(nomFeuille(t)), t.un).filter(l => l["Titre"]));
     if (!lignes.length) throw new Error("feuilles Jeux / Films / Séries / Livres / Courts introuvables ou vides");
     const supports = lireFeuille(classeur.getWorksheet("Supports")).map(l => l["Support"]).filter(Boolean);
     // Onglet « Pas intéressés » (s'il existe dans le fichier : sinon on garde ceux de l'appli)
@@ -3827,9 +3870,10 @@ async function importerExcel(champ) {
     // Jeux : colonnes « Image boîte » / « Image cartouche » (cartouche, disque ou icône PC). Même adresse qu'avant :
     // on garde la copie déjà faite ; ancien fichier sans ces colonnes : on garde les images de l'appli.
     const colImgs = lignes.some(l => Object.keys(l).includes("Image boîte"));
-    const imgDe = (url, avant) => {
+    const imgDe = (url, avant, copie) => {
       if (!colImgs) return avant;
       url = lienValide(url);
+      if (copie) return { image: url, miniature: copie, essais: 0 };   // image posée dans la case Excel
       return url && avant?.image === url ? avant : { image: url, miniature: "", essais: 0 };
     };
     const nouvelles = lignes.map((l, i) => {
@@ -3842,7 +3886,9 @@ async function importerExcel(champ) {
         revoir: simplifier(l["À revoir"]) === "oui", infini: simplifier(l["Infini"]) === "oui", note: l["Note"], notePlusTard: simplifier(l["Note plus tard"]) === "oui", coeur: simplifier(l["Coup de cœur"]) === "oui",
         passages: String(l["Vu"] || "").split(";").map(dateDuTexte).filter(Boolean), debut: dateDuTexte(l["Commencé"] || ""),
         support: l["Support"], genres: String(l["Genres"] || "").split(","), tags: String(l["Tags"] || "").split(","),
-        avis: l["Avis"], image: l["Image"], miniature: a?.miniature, mq: a?.mq, imgs: { boite: imgDe(l["Image boîte"], a?.imgs?.boite), cart: imgDe(l["Image cartouche"], a?.imgs?.cart) }, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
+        avis: l["Avis"], image: type === "jeu" ? l["Image boîte"] : l["Image"],
+        miniature: l._img("Affiche") || a?.miniature, mq: l._img("Affiche") ? 2 : a?.mq,
+        imgs: { boite: imgDe(l["Image boîte"], a?.imgs?.boite, l._img("Boîte")), cart: imgDe(l["Image cartouche"], a?.imgs?.cart, l._img("Cartouche")) }, afficheChoisie: simplifier(l["Affiche choisie"]) === "oui", aVerifier: simplifier(l["À vérifier"]) === "oui",
         saisons: listeSaisons ? { actif: true, liste: listeSaisons }
           : saisons ? { actif: true, total: +saisons[2], vues: Array.from({ length: +saisons[1] }, (_, k) => k + 1) } : a?.saisons,
         saga: colSaga ? sagaDe(type, l["Saga"]) : (a?.saga || ""), tome: colSaga ? l["Tome"] : a?.tome, wd: a?.wd, sagaCherchee: !!l["Saga"] || a?.sagaCherchee, sagaManuel: a?.sagaManuel,
